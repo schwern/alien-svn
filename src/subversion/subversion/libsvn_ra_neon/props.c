@@ -2,17 +2,22 @@
  * props.c :  routines for fetching DAV properties
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -25,6 +30,7 @@
 #include <apr_want.h>
 
 #include "svn_error.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_dav.h"
 #include "svn_base64.h"
@@ -35,6 +41,7 @@
 #include "../libsvn_ra/ra_loader.h"
 
 #include "private/svn_dav_protocol.h"
+#include "private/svn_fspath.h"
 #include "svn_private_config.h"
 
 #include "ra_neon.h"
@@ -73,7 +80,7 @@ static const ne_propname baseline_props[] =
 
 /*** Propfind Implementation ***/
 
-typedef struct {
+typedef struct elem_defn {
   svn_ra_neon__xml_elmid id;
   const char *name;
   int is_property;      /* is it a property, or part of some structure? */
@@ -407,7 +414,9 @@ static svn_error_t * end_element(void *baton, int state,
     case ELEM_href:
       /* Special handling for <href> that belongs to the <response> tag. */
       if (rsrc->href_parent == ELEM_response)
-        return assign_rsrc_url(pc->rsrc, cdata, pc->pool);
+        return assign_rsrc_url(pc->rsrc,
+                               svn_urlpath__canonicalize(cdata, pc->pool),
+                               pc->pool);
 
       /* Use the parent element's name, not the href. */
       parent_defn = defn_from_id(rsrc->href_parent);
@@ -418,7 +427,8 @@ static svn_error_t * end_element(void *baton, int state,
 
       /* All other href's we'll treat as property values. */
       name = parent_defn->name;
-      value = svn_string_create(cdata, pc->pool);
+      value = svn_string_create(svn_urlpath__canonicalize(cdata, pc->pool),
+                                pc->pool);
       break;
 
     default:
@@ -433,7 +443,7 @@ static svn_error_t * end_element(void *baton, int state,
 
       if (state == ELEM_unknown)
         {
-          name = apr_pstrcat(pc->pool, nspace, name, NULL);
+          name = apr_pstrcat(pc->pool, nspace, name, (char *)NULL);
         }
       else
         {
@@ -521,7 +531,8 @@ svn_error_t * svn_ra_neon__get_props(apr_hash_t **results,
           svn_pool_clear(iterpool);
           svn_stringbuf_appendcstr
             (body, apr_pstrcat(iterpool, "<", which_props[n].name, " xmlns=\"",
-                               which_props[n].nspace, "\"/>" DEBUG_CR, NULL));
+                               which_props[n].nspace, "\"/>" DEBUG_CR,
+                               (char *)NULL));
         }
       svn_stringbuf_appendcstr(body, "</prop></propfind>" DEBUG_CR);
       svn_pool_destroy(iterpool);
@@ -618,14 +629,14 @@ svn_error_t * svn_ra_neon__get_one_prop(const svn_string_t **propval,
   SVN_ERR(svn_ra_neon__get_props_resource(&rsrc, sess, url, label, props,
                                           pool));
 
-  name = apr_pstrcat(pool, propname->nspace, propname->name, NULL);
+  name = apr_pstrcat(pool, propname->nspace, propname->name, (char *)NULL);
   value = apr_hash_get(rsrc->propset, name, APR_HASH_KEY_STRING);
   if (value == NULL)
     {
       /* ### need an SVN_ERR here */
       return svn_error_createf(SVN_ERR_FS_NOT_FOUND, NULL,
-                               _("'%s' was not present on the resource"),
-                               name);
+                               _("'%s' was not present on the resource '%s'"),
+                               name, url);
     }
 
   *propval = value;
@@ -635,12 +646,11 @@ svn_error_t * svn_ra_neon__get_one_prop(const svn_string_t **propval,
 svn_error_t * svn_ra_neon__get_starting_props(svn_ra_neon__resource_t **rsrc,
                                               svn_ra_neon__session_t *sess,
                                               const char *url,
-                                              const char *label,
                                               apr_pool_t *pool)
 {
   svn_string_t *propval;
 
-  SVN_ERR(svn_ra_neon__get_props_resource(rsrc, sess, url, label,
+  SVN_ERR(svn_ra_neon__get_props_resource(rsrc, sess, url, NULL,
                                           starting_props, pool));
 
   /* Cache some of the resource information. */
@@ -661,6 +671,27 @@ svn_error_t * svn_ra_neon__get_starting_props(svn_ra_neon__resource_t **rsrc,
                              APR_HASH_KEY_STRING);
       if (propval)
         sess->uuid = apr_pstrdup(sess->pool, propval->data);
+    }
+
+  if (! sess->repos_root)
+    {
+      propval = apr_hash_get((*rsrc)->propset,
+                             SVN_RA_NEON__PROP_BASELINE_RELPATH,
+                             APR_HASH_KEY_STRING);
+
+      if (propval)
+      {
+        ne_uri uri;
+        svn_stringbuf_t *urlbuf = svn_stringbuf_create(url, pool);
+
+        svn_path_remove_components(urlbuf,
+                                   svn_path_component_count(propval->data));
+
+        uri = sess->root;
+        uri.path = urlbuf->data;
+
+        sess->repos_root = svn_ra_neon__uri_unparse(&uri, sess->pool);
+      }
     }
 
   return SVN_NO_ERROR;
@@ -699,24 +730,28 @@ svn_ra_neon__search_for_starting_props(svn_ra_neon__resource_t **rsrc,
   ne_uri_free(&parsed_url);
 
   /* Try to get the starting_props from the public url.  If the
-     resource no longer exists in HEAD, we'll get a failure.  That's
-     fine: just keep removing components and trying to get the
-     starting_props from parent directories. */
+     resource no longer exists in HEAD or is forbidden, we'll get a
+     failure.  That's fine: just keep removing components and trying
+     to get the starting_props from parent directories. */
   while (! svn_path_is_empty(path_s->data))
     {
       svn_pool_clear(iterpool);
       err = svn_ra_neon__get_starting_props(rsrc, sess, path_s->data,
-                                            NULL, iterpool);
+                                            iterpool);
       if (! err)
-        break;   /* found an existing parent! */
+        break;   /* found an existing, readable parent! */
 
-      if (err->apr_err != SVN_ERR_FS_NOT_FOUND)
+      if ((err->apr_err != SVN_ERR_FS_NOT_FOUND) &&
+          (err->apr_err != SVN_ERR_RA_DAV_FORBIDDEN))
         return err;  /* found a _real_ error */
 
       /* else... lop off the basename and try again. */
+      /* ### TODO: path_s is an absolute, schema-less URI, but
+         ### technically not an FS_PATH. */
       svn_stringbuf_set(lopped_path,
-                        svn_path_join(svn_path_basename(path_s->data, iterpool),
-                                      lopped_path->data, iterpool));
+                        svn_relpath_join(svn_urlpath__basename(path_s->data,
+                                                               iterpool),
+                                         lopped_path->data, iterpool));
 
       len = path_s->len;
       svn_path_remove_component(path_s);
@@ -865,9 +900,9 @@ svn_error_t *svn_ra_neon__get_baseline_props(svn_string_t *bc_relative,
   /* don't forget to tack on the parts we lopped off in order to find
      the VCC...  We are expected to return a URI decoded relative
      path, so decode the lopped path first. */
-  my_bc_relative = svn_path_join(relative_path->data,
-                                 svn_path_uri_decode(lopped_path, pool),
-                                 pool);
+  my_bc_relative = svn_relpath_join(relative_path->data,
+                                    svn_path_uri_decode(lopped_path, pool),
+                                    pool);
 
   /* if they want the relative path (could be, they're just trying to find
      the baseline collection), then return it */
@@ -922,12 +957,8 @@ svn_error_t *svn_ra_neon__get_baseline_props(svn_string_t *bc_relative,
   else
     {
       /* Fetch a specific revision */
-
-      char label[20];
-
       /* ### send Label hdr, get DAV:baseline-collection [from the baseline] */
-
-      apr_snprintf(label, sizeof(label), "%ld", revision);
+      const char *label = apr_ltoa(pool, revision);
 
       /* ### do we want to optimize the props we fetch, based on what the
          ### user asked for? i.e. omit version-name if latest_rev is NULL */
@@ -942,18 +973,59 @@ svn_error_t *svn_ra_neon__get_baseline_props(svn_string_t *bc_relative,
 }
 
 
-svn_error_t *svn_ra_neon__get_baseline_info(svn_boolean_t *is_dir,
-                                            svn_string_t *bc_url,
-                                            svn_string_t *bc_relative,
+svn_error_t *svn_ra_neon__get_baseline_info(const char **bc_url_p,
+                                            const char **bc_relative_p,
                                             svn_revnum_t *latest_rev,
                                             svn_ra_neon__session_t *sess,
                                             const char *url,
                                             svn_revnum_t revision,
                                             apr_pool_t *pool)
 {
-  svn_ra_neon__resource_t *baseline_rsrc, *rsrc;
+  svn_ra_neon__resource_t *baseline_rsrc;
   const svn_string_t *my_bc_url;
   svn_string_t my_bc_rel;
+
+  /* If the server supports HTTPv2, we can bypass alot of the hard
+     work here.  Otherwise, we fall back to older (less direct)
+     semantics.  */
+  if (SVN_RA_NEON__HAVE_HTTPV2_SUPPORT(sess))
+    {
+      /* Fetch youngest revision from server only if needed to construct
+         baseline collection URL or return to caller. */
+      if (! SVN_IS_VALID_REVNUM(revision) && (bc_url_p || latest_rev))
+        {
+          svn_revnum_t youngest;
+
+          SVN_ERR(svn_ra_neon__exchange_capabilities(sess, NULL,
+                                                     &youngest, pool));
+          if (! SVN_IS_VALID_REVNUM(youngest))
+            return svn_error_create(SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED, NULL,
+                                    _("The OPTIONS response did not include "
+                                      "the youngest revision"));
+          revision = youngest;
+        }
+      if (bc_url_p)
+        {
+          *bc_url_p = apr_psprintf(pool, "%s/%ld", sess->rev_root_stub,
+                                   revision);
+        }
+      if (bc_relative_p)
+        {
+          const char *relpath = svn_uri_skip_ancestor(sess->repos_root, url,
+                                                      pool);
+          if (! relpath)
+            return svn_error_createf(SVN_ERR_RA_REPOS_ROOT_URL_MISMATCH, NULL,
+                                     _("Url '%s' is not in repository '%s'"),
+                                     url, sess->repos_root);
+
+          *bc_relative_p = relpath;
+        }
+      if (latest_rev)
+        {
+          *latest_rev = revision;
+        }
+      return SVN_NO_ERROR;
+    }
 
   /* Go fetch a BASELINE_RSRC that contains specific properties we
      want.  This routine will also fill in BC_RELATIVE as best it
@@ -984,8 +1056,8 @@ svn_error_t *svn_ra_neon__get_baseline_info(svn_boolean_t *is_dir,
     }
 
   /* maybe return bc_url to the caller */
-  if (bc_url)
-    *bc_url = *my_bc_url;
+  if (bc_url_p)
+    *bc_url_p = my_bc_url->data;
 
   if (latest_rev != NULL)
     {
@@ -1005,54 +1077,29 @@ svn_error_t *svn_ra_neon__get_baseline_info(svn_boolean_t *is_dir,
       *latest_rev = SVN_STR_TO_REV(vsn_name->data);
     }
 
-  if (is_dir != NULL)
-    {
-      /* query the DAV:resourcetype of the full, assembled URL. */
-      const char *full_bc_url = svn_path_url_add_component(my_bc_url->data,
-                                                           my_bc_rel.data,
-                                                           pool);
-      SVN_ERR(svn_ra_neon__get_starting_props(&rsrc, sess, full_bc_url,
-                                              NULL, pool));
-      *is_dir = rsrc->is_collection;
-    }
-
-  if (bc_relative)
-    *bc_relative = my_bc_rel;
+  if (bc_relative_p)
+    *bc_relative_p = my_bc_rel.data;
 
   return SVN_NO_ERROR;
 }
 
 
-/* Helper function for svn_ra_neon__do_proppatch() below. */
-static void
-append_setprop(svn_stringbuf_t *body,
-               const char *name,
-               const svn_string_t *value,
-               apr_pool_t *pool)
+/* Helper function for append_setprop() below. */
+static svn_error_t *
+get_encoding_and_cdata(const char **encoding_p,
+                       const char **cdata_p,
+                       const svn_string_t *value,
+                       apr_pool_t *pool)
 {
-  const char *encoding = "";
+  const char *encoding;
   const char *xml_safe;
-  const char *xml_tag_name;
 
-  /* Map property names to namespaces */
-#define NSLEN (sizeof(SVN_PROP_PREFIX) - 1)
-  if (strncmp(name, SVN_PROP_PREFIX, NSLEN) == 0)
+  /* Easy out. */
+  if (value == NULL)
     {
-      xml_tag_name = apr_pstrcat(pool, "S:", name + NSLEN, NULL);
-    }
-#undef NSLEN
-  else
-    {
-      xml_tag_name = apr_pstrcat(pool, "C:", name, NULL);
-    }
-
-  /* If there is no value, just generate an empty tag and get outta
-     here. */
-  if (! value)
-    {
-      svn_stringbuf_appendcstr(body,
-                               apr_psprintf(pool, "<%s />", xml_tag_name));
-      return;
+      *encoding_p = "";
+      *cdata_p = "";
+      return SVN_NO_ERROR;
     }
 
   /* If a property is XML-safe, XML-encode it.  Else, base64-encode
@@ -1062,6 +1109,7 @@ append_setprop(svn_stringbuf_t *body,
       svn_stringbuf_t *xml_esc = NULL;
       svn_xml_escape_cdata_string(&xml_esc, value, pool);
       xml_safe = xml_esc->data;
+      encoding = "";
     }
   else
     {
@@ -1071,11 +1119,77 @@ append_setprop(svn_stringbuf_t *body,
       xml_safe = base64ed->data;
     }
 
+  *encoding_p = encoding;
+  *cdata_p = xml_safe;
+  return SVN_NO_ERROR;
+}
+
+/* Helper function for svn_ra_neon__do_proppatch() below. */
+static svn_error_t *
+append_setprop(svn_stringbuf_t *body,
+               const char *name,
+               const svn_string_t *const *old_value_p,
+               const svn_string_t *value,
+               apr_pool_t *pool)
+{
+  const char *encoding;
+  const char *xml_safe;
+  const char *xml_tag_name;
+  const char *old_value_tag;
+
+  /* Map property names to namespaces */
+#define NSLEN (sizeof(SVN_PROP_PREFIX) - 1)
+  if (strncmp(name, SVN_PROP_PREFIX, NSLEN) == 0)
+    {
+      xml_tag_name = apr_pstrcat(pool, "S:", name + NSLEN, (char *)NULL);
+    }
+#undef NSLEN
+  else
+    {
+      xml_tag_name = apr_pstrcat(pool, "C:", name, (char *)NULL);
+    }
+
+  if (old_value_p)
+    {
+      if (*old_value_p)
+        {
+          const char *encoding2;
+          const char *xml_safe2;
+          SVN_ERR(get_encoding_and_cdata(&encoding2, &xml_safe2,
+                                         *old_value_p, pool));
+          old_value_tag = apr_psprintf(pool, "<%s %s>%s</%s>",
+                                       "V:" SVN_DAV__OLD_VALUE, encoding2,
+                                       xml_safe2, "V:" SVN_DAV__OLD_VALUE);
+        }
+      else
+        {
+#define OLD_VALUE_ABSENT_TAG \
+          "<" "V:" SVN_DAV__OLD_VALUE \
+              " V:" SVN_DAV__OLD_VALUE__ABSENT "=\"1\" " \
+          "/>"
+          old_value_tag = OLD_VALUE_ABSENT_TAG;
+        }
+    }
+  else
+    {
+      old_value_tag = "";
+    }
+
+  if (old_value_p && !value)
+    {
+      encoding = "V:" SVN_DAV__OLD_VALUE__ABSENT "=\"1\"" ;
+      xml_safe = "";
+    }
+  else
+    {
+      SVN_ERR(get_encoding_and_cdata(&encoding, &xml_safe, value, pool));
+    }
+
   svn_stringbuf_appendcstr(body,
-                           apr_psprintf(pool,"<%s %s>%s</%s>",
-                                        xml_tag_name, encoding,
+                           apr_psprintf(pool,"<%s %s>%s%s</%s>",
+                                        xml_tag_name, encoding, old_value_tag,
                                         xml_safe, xml_tag_name));
-  return;
+  return SVN_NO_ERROR;
 }
 
 
@@ -1083,17 +1197,20 @@ svn_error_t *
 svn_ra_neon__do_proppatch(svn_ra_neon__session_t *ras,
                           const char *url,
                           apr_hash_t *prop_changes,
-                          apr_array_header_t *prop_deletes,
+                          const apr_array_header_t *prop_deletes,
+                          apr_hash_t *prop_old_values,
                           apr_hash_t *extra_headers,
                           apr_pool_t *pool)
 {
   svn_error_t *err;
   svn_stringbuf_t *body;
+  int code;
   apr_pool_t *subpool = svn_pool_create(pool);
 
   /* just punt if there are no changes to make. */
   if ((prop_changes == NULL || (! apr_hash_count(prop_changes)))
-      && (prop_deletes == NULL || prop_deletes->nelts == 0))
+      && (prop_deletes == NULL || prop_deletes->nelts == 0)
+      && (prop_old_values == NULL || (! apr_hash_count(prop_old_values))))
     return SVN_NO_ERROR;
 
   /* easier to roll our own PROPPATCH here than use ne_proppatch(), which
@@ -1104,6 +1221,22 @@ svn_ra_neon__do_proppatch(svn_ra_neon__session_t *ras,
      SVN_DAV_PROP_NS_DAV "\" xmlns:C=\""
      SVN_DAV_PROP_NS_CUSTOM "\" xmlns:S=\""
      SVN_DAV_PROP_NS_SVN "\">" DEBUG_CR, pool);
+
+  /* Handle property changes/deletions with expected old values. */
+  if (prop_old_values)
+    {
+      apr_hash_index_t *hi;
+      svn_stringbuf_appendcstr(body, "<D:set><D:prop>");
+      for (hi = apr_hash_first(pool, prop_old_values); hi; hi = apr_hash_next(hi))
+        {
+          const char *name = svn__apr_hash_index_key(hi);
+          svn_dav__two_props_t *both_values = svn__apr_hash_index_val(hi);
+          svn_pool_clear(subpool);
+          SVN_ERR(append_setprop(body, name, both_values->old_value_p,
+                                 both_values->new_value, subpool));
+        }
+      svn_stringbuf_appendcstr(body, "</D:prop></D:set>");
+    }
 
   /* Handle property changes. */
   if (prop_changes)
@@ -1116,7 +1249,7 @@ svn_ra_neon__do_proppatch(svn_ra_neon__session_t *ras,
           void *val;
           svn_pool_clear(subpool);
           apr_hash_this(hi, &key, NULL, &val);
-          append_setprop(body, key, val, subpool);
+          SVN_ERR(append_setprop(body, key, NULL, val, subpool));
         }
       svn_stringbuf_appendcstr(body, "</D:prop></D:set>");
     }
@@ -1130,7 +1263,7 @@ svn_ra_neon__do_proppatch(svn_ra_neon__session_t *ras,
         {
           const char *name = APR_ARRAY_IDX(prop_deletes, n, const char *);
           svn_pool_clear(subpool);
-          append_setprop(body, name, NULL, subpool);
+          SVN_ERR(append_setprop(body, name, NULL, NULL, subpool));
         }
       svn_stringbuf_appendcstr(body, "</D:prop></D:remove>");
     }
@@ -1145,9 +1278,22 @@ svn_ra_neon__do_proppatch(svn_ra_neon__session_t *ras,
   apr_hash_set(extra_headers, "Content-Type", APR_HASH_KEY_STRING,
                "text/xml; charset=UTF-8");
 
-  err = svn_ra_neon__simple_request(NULL, ras, "PROPPATCH", url,
+  err = svn_ra_neon__simple_request(&code, ras, "PROPPATCH", url,
                                     extra_headers, body->data,
                                     200, 207, pool);
+
+  if (err && err->apr_err == SVN_ERR_RA_DAV_REQUEST_FAILED)
+    switch(code)
+      {
+        case 423:
+          return svn_error_createf(SVN_ERR_RA_NOT_LOCKED, err,
+                                   _("No lock on path '%s'; "
+                                     " repository is unchanged"), url);
+        /* ### Add case 412 for a better error on issue #3674 */
+        default:
+          break;
+      }
+
   if (err)
     return svn_error_create
       (SVN_ERR_RA_DAV_PROPPATCH_FAILED, err,
@@ -1167,10 +1313,12 @@ svn_ra_neon__do_check_path(svn_ra_session_t *session,
 {
   svn_ra_neon__session_t *ras = session->priv;
   const char *url = ras->url->data;
+  const char *bc_url;
+  const char *bc_relative;
   svn_error_t *err;
   svn_boolean_t is_dir;
 
-  /* ### For now, using svn_ra_neon__get_baseline_info() works because
+  /* ### For now, using svn_ra_neon__get_starting_props() works because
      we only have three possibilities: dir, file, or none.  When we
      add symlinks, we will need to do something different.  Here's one
      way described by Greg Stein:
@@ -1200,10 +1348,23 @@ svn_ra_neon__do_check_path(svn_ra_session_t *session,
 
   /* If we were given a relative path to append, append it. */
   if (path)
-    url = svn_path_url_add_component(url, path, pool);
+    url = svn_path_url_add_component2(url, path, pool);
 
-  err = svn_ra_neon__get_baseline_info(&is_dir, NULL, NULL, NULL,
-                                       ras, url, revision, pool);
+  err = svn_ra_neon__get_baseline_info(&bc_url, &bc_relative, NULL, ras,
+                                       url, revision, pool);
+
+  if (! err)
+    {
+      svn_ra_neon__resource_t *rsrc;
+      const char *full_bc_url = svn_path_url_add_component2(bc_url,
+                                                            bc_relative,
+                                                            pool);
+
+      /* query the DAV:resourcetype of the full, assembled URL. */
+      err = svn_ra_neon__get_starting_props(&rsrc, ras, full_bc_url, pool);
+      if (! err)
+        is_dir = rsrc->is_collection;
+    }
 
   if (err == SVN_NO_ERROR)
     {
@@ -1240,7 +1401,7 @@ svn_ra_neon__do_stat(svn_ra_session_t *session,
 
   /* If we were given a relative path to append, append it. */
   if (path)
-    url = svn_path_url_add_component(url, path, pool);
+    url = svn_path_url_add_component2(url, path, pool);
 
   /* Invalid revision means HEAD, which is just the public URL. */
   if (! SVN_IS_VALID_REVNUM(revision))
@@ -1250,10 +1411,10 @@ svn_ra_neon__do_stat(svn_ra_session_t *session,
   else
     {
       /* Else, convert (rev, path) into an opaque server-generated URL. */
-      svn_string_t bc_url, bc_relative;
+      const char *bc_url;
+      const char *bc_relative;
 
-      err = svn_ra_neon__get_baseline_info(NULL, &bc_url, &bc_relative,
-                                           NULL, ras,
+      err = svn_ra_neon__get_baseline_info(&bc_url, &bc_relative, NULL, ras,
                                            url, revision, pool);
       if (err)
         {
@@ -1268,8 +1429,7 @@ svn_ra_neon__do_stat(svn_ra_session_t *session,
             return err;
         }
 
-      final_url = svn_path_url_add_component(bc_url.data, bc_relative.data,
-                                             pool);
+      final_url = svn_path_url_add_component2(bc_url, bc_relative, pool);
     }
 
   /* Depth-zero PROPFIND is the One True DAV Way. */

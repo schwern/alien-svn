@@ -20,14 +20,14 @@ no_index:
 provides:
   Alien::SVN:
     file: lib/Alien/SVN.pm
-    version: v1.6.12.1
+    version: v1.7.3
   SVN::Base:
     file: src/subversion/subversion/bindings/swig/perl/native/Base.pm
   SVN::Client:
     file: src/subversion/subversion/bindings/swig/perl/native/Client.pm
   SVN::Core:
     file: src/subversion/subversion/bindings/swig/perl/native/Core.pm
-    version: 1.6.12
+    version: 1.7.3
   SVN::Delta:
     file: src/subversion/subversion/bindings/swig/perl/native/Delta.pm
   SVN::Fs:
@@ -45,4 +45,4 @@ resources:
   bugtracker: http://rt.cpan.org/NoAuth/Bugs.html?Dist=Alien-SVN
   license: http://dev.perl.org/licenses/
   repository: http://github.com/schwern/alien-svn
-version: v1.6.12.1
+version: v1.7.3

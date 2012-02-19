@@ -2,17 +2,22 @@
  * svn_server.h :  declarations for the svn server
  *
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -31,6 +36,8 @@ extern "C" {
 #include "svn_repos.h"
 #include "svn_ra_svn.h"
 
+enum username_case_type { CASE_FORCE_UPPER, CASE_FORCE_LOWER, CASE_ASIS };
+
 typedef struct server_baton_t {
   svn_repos_t *repos;
   const char *repos_name;  /* URI-encoded name of repository (not for authz) */
@@ -42,7 +49,10 @@ typedef struct server_baton_t {
   const char *realm;       /* Authentication realm */
   const char *repos_url;   /* URL to base of repository */
   svn_stringbuf_t *fs_path;/* Decoded base in-repos path (w/ leading slash) */
-  const char *user;
+  apr_hash_t *fs_config;   /* Additional FS configuration parameters */
+  const char *user;        /* Authenticated username of the user */
+  enum username_case_type username_case; /* Case-normalize the username? */
+  const char *authz_user;  /* Username for authz ('user' + 'username_case') */
   svn_boolean_t tunnel;    /* Tunneled through login agent */
   const char *tunnel_user; /* Allow EXTERNAL to authenticate as this */
   svn_boolean_t read_only; /* Disallow write access (global flag) */
@@ -96,6 +106,25 @@ typedef struct serve_params_t {
 
   /* A filehandle open for writing logs to; possibly NULL. */
   apr_file_t *log_file;
+
+  /* Username case normalization style. */
+  enum username_case_type username_case;
+
+  /* Enable text delta caching for all FSFS repositories. */
+  svn_boolean_t cache_txdeltas;
+
+  /* Enable full-text caching for all FSFS repositories. */
+  svn_boolean_t cache_fulltexts;
+
+  /* Size of the in-memory cache (used by FSFS only). */
+  apr_uint64_t memory_cache_size;
+
+  /* Data compression level to reduce for network traffic. If this
+     is 0, no compression should be applied and the protocol may
+     fall back to svndiff "version 0" bypassing zlib entirely.
+     Defaults to SVN_DELTA_COMPRESSION_LEVEL_DEFAULT. */
+  int compression_level;
+
 } serve_params_t;
 
 /* Serve the connection CONN according to the parameters PARAMS. */
@@ -103,11 +132,16 @@ svn_error_t *serve(svn_ra_svn_conn_t *conn, serve_params_t *params,
                    apr_pool_t *pool);
 
 /* Load a svnserve configuration file located at FILENAME into CFG,
-   any referenced password database into PWDB and any referenced
-   authorization database into AUTHZDB.  If MUST_EXIST is true and
-   FILENAME does not exist, then this returns an error.  BASE may be
-   specified as the base path to any referenced password and
-   authorization files found in FILENAME.
+   and if such as found, then:
+
+    - set *PWDB to any referenced password database,
+    - set *AUTHZDB to any referenced authorization database, and
+    - set *USERNAME_CASE to the enumerated value of the
+      'force-username-case' configuration value (or its default).
+
+   If MUST_EXIST is true and FILENAME does not exist, then return an
+   error.  BASE may be specified as the base path to any referenced
+   password and authorization files found in FILENAME.
 
    If SERVER is not NULL, log the real errors with SERVER and CONN but
    return generic errors to the client.  CONN must not be NULL if SERVER
@@ -115,6 +149,7 @@ svn_error_t *serve(svn_ra_svn_conn_t *conn, serve_params_t *params,
 svn_error_t *load_configs(svn_config_t **cfg,
                           svn_config_t **pwdb,
                           svn_authz_t **authzdb,
+                          enum username_case_type *username_case,
                           const char *filename,
                           svn_boolean_t must_exist,
                           const char *base,

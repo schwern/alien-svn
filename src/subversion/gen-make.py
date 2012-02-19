@@ -1,5 +1,25 @@
 #!/usr/bin/env python
 #
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#
+#
 # gen-make.py -- generate makefiles for building Subversion
 #
 
@@ -43,6 +63,7 @@ def main(fname, gentype, verfname=None,
     generator.compute_hdr_deps()
 
   generator.write()
+  generator.write_sqlite_headers()
 
   if ('--debug', '') in other_options:
     for dep_type, target_dict in generator.graph.deps.items():
@@ -55,7 +76,7 @@ def main(fname, gentype, verfname=None,
     gen_keys = sorted(generator.__dict__.keys())
     for name in gen_keys:
       value = generator.__dict__[name]
-      if type(value) == type([]):
+      if isinstance(value, list):
         print(name + ": ")
         for i in value:
           print("  " + _objinfo(i))
@@ -63,7 +84,7 @@ def main(fname, gentype, verfname=None,
 
 
 def _objinfo(o):
-  if type(o) == type(''):
+  if isinstance(o, str):
     return repr(o)
   else:
     t = o.__class__.__name__
@@ -72,8 +93,10 @@ def _objinfo(o):
     return "%s: %s %s" % (t,n,f)
 
 
-def _usage_exit():
-  "print usage, exit the script"
+def _usage_exit(err=None):
+  "print ERR (if any), print usage, then exit the script"
+  if err:
+    print("ERROR: %s\n" % (err))
   print("USAGE:  gen-make.py [options...] [conf-file]")
   print("  -s        skip dependency generation")
   print("  --debug   print lots of stuff only developers care about")
@@ -146,6 +169,9 @@ def _usage_exit():
   print("           tell neon to look for ZLib headers and")
   print("           libs in DIR")
   print("")
+  print("  --with-jdk=DIR")
+  print("           look for the java development kit here")
+  print("")
   print("  --with-junit=DIR")
   print("           look for the junit jar here")
   print("           junit is for testing the java bindings")
@@ -181,8 +207,11 @@ def _usage_exit():
   print("  --disable-shared")
   print("           only build static libraries")
   print("")
+  print("  --with-static-apr")
+  print("           Use static apr and apr-util")
+  print("")
   print("  --vsnet-version=VER")
-  print("           generate for VS.NET version VER (2002, 2003, 2005 or 2008)")
+  print("           generate for VS.NET version VER (2002, 2003, 2005, 2008 or 2010)")
   print("           [only valid in combination with '-t vcproj']")
   print("")
   print("  --with-apr_memcache=DIR")
@@ -220,11 +249,13 @@ if __name__ == '__main__':
                             'with-libintl=',
                             'with-openssl=',
                             'with-zlib=',
+                            'with-jdk=',
                             'with-junit=',
                             'with-swig=',
                             'with-sqlite=',
                             'with-sasl=',
                             'with-apr_memcache=',
+                            'with-static-apr',
                             'enable-pool-debug',
                             'enable-purify',
                             'enable-quantify',
@@ -236,9 +267,9 @@ if __name__ == '__main__':
                             'vsnet-version=',
                             ])
     if len(args) > 1:
-      _usage_exit()
-  except getopt.GetoptError:
-    _usage_exit()
+      _usage_exit("Too many arguments")
+  except getopt.GetoptError, e:
+    _usage_exit(str(e))
 
   conf = 'build.conf'
   skip = 0
@@ -281,7 +312,7 @@ if __name__ == '__main__':
   opt_conf.close()
 
   if gentype not in gen_modules.keys():
-    _usage_exit()
+    _usage_exit("Unknown module type '%s'" % (gentype))
 
   main(conf, gentype, skip_depends=skip, other_options=rest.list)
 

@@ -3,21 +3,27 @@
  * the differences of two repository versions
  *
  * ====================================================================
- * Copyright (c) 2005-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
 
+#include "svn_dirent_uri.h"
 #include "svn_props.h"
 #include "svn_pools.h"
 
@@ -40,6 +46,18 @@ struct edit_baton {
 
   /* The start revision for the comparison */
   svn_revnum_t revision;
+
+  /* TRUE if the operation needs to walk deleted dirs on the "old" side.
+     FALSE otherwise. */
+  svn_boolean_t walk_deleted_repos_dirs;
+
+  /* A callback used to see if the client wishes to cancel the running
+     operation. */
+  svn_cancel_func_t cancel_func;
+
+  /* A baton to pass to the cancellation callback. */
+  void *cancel_baton;
+
 };
 
 
@@ -92,7 +110,7 @@ create_item_baton(struct edit_baton *edit_baton,
 /* Make sure that this item baton contains a summarize struct.
  * If it doesn't before this call, allocate a new struct in the item's pool,
  * initializing the diff kind to normal.
- * All other fields are also initialized from IB to to NULL/invalid values. */
+ * All other fields are also initialized from IB or to NULL/invalid values. */
 static void
 ensure_summarize(struct item_baton *ib)
 {
@@ -124,6 +142,83 @@ open_root(void *edit_baton,
   return SVN_NO_ERROR;
 }
 
+/* Recursively walk the tree rooted at DIR (at REVISION) in the
+ * repository, reporting all files as deleted.  Part of a workaround
+ * for issue 2333.
+ *
+ * DIR is a repository path relative to the URL in RA_SESSION.  REVISION
+ * may be NULL, in which case it defaults to HEAD.  EDIT_BATON is the
+ * overall crawler editor baton.  If CANCEL_FUNC is not NULL, then it
+ * should refer to a cancellation function (along with CANCEL_BATON).
+ */
+/* ### TODO: Handle depth. */
+static svn_error_t *
+diff_deleted_dir(const char *dir,
+                 svn_revnum_t revision,
+                 svn_ra_session_t *ra_session,
+                 void *edit_baton,
+                 svn_cancel_func_t cancel_func,
+                 void *cancel_baton,
+                 apr_pool_t *pool)
+{
+  struct edit_baton *eb = edit_baton;
+  apr_hash_t *dirents;
+  apr_pool_t *iterpool = svn_pool_create(pool);
+  apr_hash_index_t *hi;
+
+  if (cancel_func)
+    SVN_ERR(cancel_func(cancel_baton));
+
+  SVN_ERR(svn_ra_get_dir2(ra_session,
+                          &dirents,
+                          NULL, NULL,
+                          dir,
+                          revision,
+                          SVN_DIRENT_KIND,
+                          pool));
+
+  for (hi = apr_hash_first(pool, dirents); hi;
+       hi = apr_hash_next(hi))
+    {
+      const char *path;
+      const char *name = svn__apr_hash_index_key(hi);
+      svn_dirent_t *dirent = svn__apr_hash_index_val(hi);
+      svn_node_kind_t kind;
+      svn_client_diff_summarize_t *sum;
+
+      svn_pool_clear(iterpool);
+
+      path = svn_relpath_join(dir, name, iterpool);
+
+      SVN_ERR(svn_ra_check_path(eb->ra_session,
+                                path,
+                                eb->revision,
+                                &kind,
+                                iterpool));
+
+      sum = apr_pcalloc(iterpool, sizeof(*sum));
+      sum->summarize_kind = svn_client_diff_summarize_kind_deleted;
+      sum->path = path;
+      sum->node_kind = kind;
+
+      SVN_ERR(eb->summarize_func(sum,
+                                 eb->summarize_func_baton,
+                                 iterpool));
+
+      if (dirent->kind == svn_node_dir)
+        SVN_ERR(diff_deleted_dir(path,
+                                 revision,
+                                 ra_session,
+                                 eb,
+                                 cancel_func,
+                                 cancel_baton,
+                                 iterpool));
+    }
+
+  svn_pool_destroy(iterpool);
+  return SVN_NO_ERROR;
+}
+
 /* An editor function.  */
 static svn_error_t *
 delete_entry(const char *path,
@@ -148,7 +243,18 @@ delete_entry(const char *path,
   sum->path = path;
   sum->node_kind = kind;
 
-  return eb->summarize_func(sum, eb->summarize_func_baton, pool);
+  SVN_ERR(eb->summarize_func(sum, eb->summarize_func_baton, pool));
+
+  if (kind == svn_node_dir)
+        SVN_ERR(diff_deleted_dir(path,
+                                 eb->revision,
+                                 eb->ra_session,
+                                 eb,
+                                 eb->cancel_func,
+                                 eb->cancel_baton,
+                                 pool));
+
+  return SVN_NO_ERROR;
 }
 
 /* An editor function.  */
@@ -293,7 +399,9 @@ change_prop(void *entry_baton,
   if (svn_property_kind(NULL, name) == svn_prop_regular_kind)
     {
       ensure_summarize(ib);
-      ib->summarize->prop_changed = TRUE;
+
+      if (ib->summarize->summarize_kind != svn_client_diff_summarize_kind_added)
+        ib->summarize->prop_changed = TRUE;
     }
 
   return SVN_NO_ERROR;
@@ -304,7 +412,7 @@ svn_error_t *
 svn_client__get_diff_summarize_editor(const char *target,
                                       svn_client_diff_summarize_func_t
                                       summarize_func,
-                                      void *item_baton,
+                                      void *summarize_baton,
                                       svn_ra_session_t *ra_session,
                                       svn_revnum_t revision,
                                       svn_cancel_func_t cancel_func,
@@ -318,9 +426,12 @@ svn_client__get_diff_summarize_editor(const char *target,
 
   eb->target = target;
   eb->summarize_func = summarize_func;
-  eb->summarize_func_baton = item_baton;
+  eb->summarize_func_baton = summarize_baton;
   eb->ra_session = ra_session;
   eb->revision = revision;
+  eb->walk_deleted_repos_dirs = TRUE;
+  eb->cancel_func = cancel_func;
+  eb->cancel_baton = cancel_baton;
 
   tree_editor->open_root = open_root;
   tree_editor->delete_entry = delete_entry;

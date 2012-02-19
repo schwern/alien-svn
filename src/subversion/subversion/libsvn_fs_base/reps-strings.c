@@ -1,17 +1,22 @@
 /* reps-strings.c : intepreting representations with respect to strings
  *
  * ====================================================================
- * Copyright (c) 2000-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -127,7 +132,7 @@ delta_string_keys(apr_array_header_t **keys,
 
 /* Delete the strings associated with array KEYS in FS as part of TRAIL.  */
 static svn_error_t *
-delete_strings(apr_array_header_t *keys,
+delete_strings(const apr_array_header_t *keys,
                svn_fs_t *fs,
                trail_t *trail,
                apr_pool_t *pool)
@@ -318,7 +323,7 @@ get_one_window(struct compose_handler_baton *cb,
 
 static svn_error_t *
 rep_undeltify_range(svn_fs_t *fs,
-                    apr_array_header_t *deltas,
+                    const apr_array_header_t *deltas,
                     representation_t *fulltext,
                     int cur_chunk,
                     char *buf,
@@ -528,7 +533,7 @@ rep_read_range(svn_fs_t *fs,
                    _("Corruption detected whilst reading delta chain from "
                      "representation '%s' to '%s'"), first_rep_key, rep_key);
               else
-                return err;
+                return svn_error_trace(err);
             }
         }
     }
@@ -669,8 +674,10 @@ struct rep_read_baton
      is digestified. */
   svn_boolean_t checksum_finalized;
 
-  /* Used for temporary allocations, iff `trail' (above) is null.  */
-  apr_pool_t *pool;
+  /* Used for temporary allocations.  This pool is cleared at the
+     start of each invocation of the relevant stream read function --
+     see rep_read_contents().  */
+  apr_pool_t *scratch_pool;
 
 };
 
@@ -698,7 +705,7 @@ rep_read_get_baton(struct rep_read_baton **rb_p,
   b->checksum_finalized = FALSE;
   b->fs = fs;
   b->trail = use_trail_for_reads ? trail : NULL;
-  b->pool = pool;
+  b->scratch_pool = svn_pool_create(pool);
   b->rep_key = rep_key;
   b->offset = 0;
 
@@ -818,13 +825,11 @@ svn_fs_base__rep_contents(svn_string_t *str,
                          pool));
 
     if (! svn_checksum_match(checksum, rep_checksum))
-      return svn_error_createf
-        (SVN_ERR_FS_CORRUPT, NULL,
-         _("Checksum mismatch on representation '%s':\n"
-           "   expected:  %s\n"
-           "     actual:  %s\n"), rep_key,
-         svn_checksum_to_cstring_display(rep_checksum, pool),
-         svn_checksum_to_cstring_display(checksum, pool));
+      return svn_error_create(SVN_ERR_FS_CORRUPT,
+                svn_checksum_mismatch_err(rep_checksum, checksum, pool,
+                            _("Checksum mismatch on representation '%s'"),
+                            rep_key),
+                NULL);
   }
 
   return SVN_NO_ERROR;
@@ -866,7 +871,7 @@ txn_body_read_rep(void *baton, trail_t *trail)
                              args->buf,
                              args->len,
                              trail,
-                             trail->pool));
+                             args->rb->scratch_pool));
 
       args->rb->offset += *(args->len);
 
@@ -899,10 +904,12 @@ txn_body_read_rep(void *baton, trail_t *trail)
             {
               representation_t *rep;
 
-              svn_checksum_final(&args->rb->md5_checksum,
-                                 args->rb->md5_checksum_ctx, trail->pool);
-              svn_checksum_final(&args->rb->sha1_checksum,
-                                 args->rb->sha1_checksum_ctx, trail->pool);
+              SVN_ERR(svn_checksum_final(&args->rb->md5_checksum,
+                                         args->rb->md5_checksum_ctx,
+                                         trail->pool));
+              SVN_ERR(svn_checksum_final(&args->rb->sha1_checksum,
+                                         args->rb->sha1_checksum_ctx,
+                                         trail->pool));
               args->rb->checksum_finalized = TRUE;
 
               SVN_ERR(svn_fs_bdb__read_rep(&rep, args->rb->fs,
@@ -912,28 +919,22 @@ txn_body_read_rep(void *baton, trail_t *trail)
               if (rep->md5_checksum
                   && (! svn_checksum_match(rep->md5_checksum,
                                            args->rb->md5_checksum)))
-                return svn_error_createf
-                  (SVN_ERR_FS_CORRUPT, NULL,
-                   _("MD5 checksum mismatch on representation '%s':\n"
-                     "   expected:  %s\n"
-                     "     actual:  %s\n"), args->rb->rep_key,
-                   svn_checksum_to_cstring_display(rep->md5_checksum,
-                                                   trail->pool),
-                   svn_checksum_to_cstring_display(args->rb->md5_checksum,
-                                                   trail->pool));
+                return svn_error_create(SVN_ERR_FS_CORRUPT,
+                        svn_checksum_mismatch_err(rep->md5_checksum,
+                             args->rb->sha1_checksum, trail->pool,
+                             _("MD5 checksum mismatch on representation '%s'"),
+                             args->rb->rep_key),
+                        NULL);
 
               if (rep->sha1_checksum
                   && (! svn_checksum_match(rep->sha1_checksum,
                                            args->rb->sha1_checksum)))
-                return svn_error_createf
-                  (SVN_ERR_FS_CORRUPT, NULL,
-                   _("SHA1 checksum mismatch on representation '%s':\n"
-                     "   expected:  %s\n"
-                     "     actual:  %s\n"), args->rb->rep_key,
-                   svn_checksum_to_cstring_display(rep->sha1_checksum,
-                                                   trail->pool),
-                   svn_checksum_to_cstring_display(args->rb->sha1_checksum,
-                                                   trail->pool));
+                return svn_error_createf(SVN_ERR_FS_CORRUPT,
+                        svn_checksum_mismatch_err(rep->sha1_checksum,
+                            args->rb->sha1_checksum, trail->pool,
+                            _("SHA1 checksum mismatch on representation '%s'"),
+                            args->rb->rep_key),
+                        NULL);
             }
         }
     }
@@ -957,6 +958,9 @@ rep_read_contents(void *baton, char *buf, apr_size_t *len)
   struct rep_read_baton *rb = baton;
   struct read_rep_args args;
 
+  /* Clear the scratch pool of the results of previous invocations. */
+  svn_pool_clear(rb->scratch_pool);
+
   args.rb = rb;
   args.buf = buf;
   args.len = len;
@@ -975,7 +979,7 @@ rep_read_contents(void *baton, char *buf, apr_size_t *len)
                                      txn_body_read_rep,
                                      &args,
                                      TRUE,
-                                     rb->pool));
+                                     rb->scratch_pool));
     }
   return SVN_NO_ERROR;
 }

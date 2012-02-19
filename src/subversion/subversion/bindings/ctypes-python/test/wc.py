@@ -1,4 +1,20 @@
 #!/usr/bin/env python
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 
 import setup_path
 import unittest
@@ -43,8 +59,9 @@ class WCTestCase(unittest.TestCase):
         dumpfile = open(os.path.join(os.path.split(__file__)[0],
                         'test.dumpfile'))
 
-        # Just in case a preivous test instance was not properly cleaned up
-        self.tearDown()
+        # Just in case a previous test instance was not properly cleaned up
+        self.remove_from_disk()
+
         self.repos = LocalRepository(repos_location, create=True)
         self.repos.load(dumpfile)
 
@@ -52,12 +69,18 @@ class WCTestCase(unittest.TestCase):
         self.wc.checkout(repo_url)
 
     def tearDown(self):
+        self.repos.close()
+        self.wc.close()
+        self.remove_from_disk()
+        self.wc = None
+
+    def remove_from_disk(self):
+        """Remove anything left on disk"""
         pool = Pool()
         if os.path.exists(wc_location):
             svn_io_remove_dir(wc_location, pool)
         if os.path.exists(repos_location):
             svn_repos_delete(repos_location, pool)
-        self.wc = None
 
     def _info_receiver(self, path, info):
         self.last_info = info

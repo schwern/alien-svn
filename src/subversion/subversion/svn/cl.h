@@ -2,17 +2,22 @@
  * cl.h:  shared stuff in the command line program
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -42,7 +47,7 @@ extern "C" {
 /*** Option processing ***/
 
 /* --accept actions */
-typedef enum
+typedef enum svn_cl__accept_t
 {
   /* invalid accept action */
   svn_cl__accept_invalid = -2,
@@ -107,7 +112,7 @@ svn_cl__accept_from_word(const char *word);
 /*** Mergeinfo flavors. ***/
 
 /* --show-revs values */
-typedef enum {
+typedef enum svn_cl__show_revs_t {
   svn_cl__show_revs_invalid = -1,
   svn_cl__show_revs_merged,
   svn_cl__show_revs_eligible
@@ -131,9 +136,9 @@ typedef struct svn_cl__opt_state_t
   /* An array of svn_opt_revision_range_t *'s representing revisions
      ranges indicated on the command-line via the -r and -c options.
      For each range in the list, if only one revision was provided
-     (-rN), its 'end' member remains `svn_opt_revision_unspecified'.
-
-     NOTE: This is currently used only by merge subcommand. */
+     (-rN), its 'end' member remains 'svn_opt_revision_unspecified'.
+     This array always has at least one element, even if that is a
+     null range in which both ends are 'svn_opt_revision_unspecified'. */
   apr_array_header_t *revision_ranges;
 
   /* These are simply a copy of the range start and end values present
@@ -179,6 +184,7 @@ typedef struct svn_cl__opt_state_t
   svn_boolean_t no_ignore;       /* disregard default ignores & svn:ignore's */
   svn_boolean_t no_auth_cache;   /* do not cache authentication information */
   svn_boolean_t no_diff_deleted; /* do not show diffs for deleted files */
+  svn_boolean_t show_copies_as_adds; /* do not diff copies with their source */
   svn_boolean_t notice_ancestry; /* notice ancestry for diff-y operations */
   svn_boolean_t ignore_ancestry; /* ignore ancestry for merge-y operations */
   svn_boolean_t ignore_externals;/* ignore externals definitions */
@@ -187,7 +193,7 @@ typedef struct svn_cl__opt_state_t
   svn_boolean_t revprop;         /* operate on a revision property */
   const char *diff_cmd;          /* the external diff command to use */
   const char *merge_cmd;         /* the external merge command to use */
-  const char *editor_cmd;        /* external editor command. */
+  const char *editor_cmd;        /* the external editor command to use */
   svn_boolean_t record_only;     /* whether to record mergeinfo */
   const char *old_target;        /* diff target */
   const char *new_target;        /* diff target */
@@ -215,10 +221,19 @@ typedef struct svn_cl__opt_state_t
   svn_boolean_t reintegrate;     /* use "reintegrate" merge-source heuristic */
   svn_boolean_t trust_server_cert; /* trust server SSL certs that would
                                       otherwise be rejected as "untrusted" */
+  int strip; /* number of leading path components to strip */
+  svn_boolean_t ignore_keywords;  /* do not expand keywords */
+  svn_boolean_t reverse_diff;     /* reverse a diff (e.g. when patching) */
+  svn_boolean_t ignore_whitespace; /* don't account for whitespace when
+                                      patching */
+  svn_boolean_t show_diff;        /* produce diff output (maps to --diff) */
+  svn_boolean_t internal_diff;    /* override diff_cmd in config file */
+  svn_boolean_t use_git_diff_format; /* Use git's extended diff format */
+  svn_boolean_t allow_mixed_rev; /* Allow operation on mixed-revision WC */
 } svn_cl__opt_state_t;
 
 
-typedef struct
+typedef struct svn_cl__cmd_baton_t
 {
   svn_cl__opt_state_t *opt_state;
   svn_client_ctx_t *ctx;
@@ -248,18 +263,21 @@ svn_opt_subcommand_t
   svn_cl__mergeinfo,
   svn_cl__mkdir,
   svn_cl__move,
+  svn_cl__patch,
   svn_cl__propdel,
   svn_cl__propedit,
   svn_cl__propget,
   svn_cl__proplist,
   svn_cl__propset,
+  svn_cl__relocate,
   svn_cl__revert,
   svn_cl__resolve,
   svn_cl__resolved,
   svn_cl__status,
   svn_cl__switch,
   svn_cl__unlock,
-  svn_cl__update;
+  svn_cl__update,
+  svn_cl__upgrade;
 
 
 /* See definition in main.c for documentation. */
@@ -276,15 +294,14 @@ extern const apr_getopt_option_t svn_cl__options[];
  * invoked on an unversioned, nonexistent, or otherwise innocuously
  * errorful resource.  Meant to be wrapped with SVN_ERR().
  *
- * If ERR is null, return SVN_NO_ERROR, setting *SUCCESS to TRUE
- * if SUCCESS is not NULL.
+ * If ERR is null, return SVN_NO_ERROR.
  *
  * Else if ERR->apr_err is one of the error codes supplied in varargs,
  * then handle ERR as a warning (unless QUIET is true), clear ERR, and
- * return SVN_NO_ERROR, setting *SUCCESS to FALSE if SUCCESS is not
- * NULL.
+ * return SVN_NO_ERROR, and push the value of ERR->apr_err into the
+ * ERRORS_SEEN array, if ERRORS_SEEN is not NULL.
  *
- * Else return ERR, setting *SUCCESS to FALSE if SUCCESS is not NULL.
+ * Else return ERR.
  *
  * Typically, error codes like SVN_ERR_UNVERSIONED_RESOURCE,
  * SVN_ERR_ENTRY_NOT_FOUND, etc, are supplied in varargs.  Don't
@@ -292,7 +309,7 @@ extern const apr_getopt_option_t svn_cl__options[];
  */
 svn_error_t *
 svn_cl__try(svn_error_t *err,
-            svn_boolean_t *success,
+            apr_array_header_t *errors_seen,
             svn_boolean_t quiet,
             ...);
 
@@ -305,7 +322,7 @@ svn_cl__check_cancel(void *baton);
 
 /* Various conflict-resolution callbacks. */
 
-typedef struct {
+typedef struct svn_cl__conflict_baton_t {
   svn_cl__accept_t accept_which;
   apr_hash_t *config;
   const char *editor_cmd;
@@ -340,9 +357,13 @@ svn_cl__conflict_handler(svn_wc_conflict_result_t **result,
 /* Print out commit information found in COMMIT_INFO to the console.
  * POOL is used for temporay allocations.
  * COMMIT_INFO should not be NULL.
+ *
+ * This function implements svn_commit_callback2_t.
  */
 svn_error_t *
-svn_cl__print_commit_info(svn_commit_info_t *commit_info, apr_pool_t *pool);
+svn_cl__print_commit_info(const svn_commit_info_t *commit_info,
+                          void *baton,
+                          apr_pool_t *pool);
 
 
 /* Convert the date in DATA to a human-readable UTF-8-encoded string
@@ -367,14 +388,22 @@ svn_cl__time_cstring_to_human_cstring(const char **human_cstring,
    unversioned items found in the working copy.
 
    When DETAILED is set, and REPOS_LOCKS is set, treat missing repository locks
-   as broken WC locks. */
+   as broken WC locks.
+
+   Increment *TEXT_CONFLICTS, *PROP_CONFLICTS, or *TREE_CONFLICTS if
+   a conflict was encountered.
+   */
 svn_error_t *
 svn_cl__print_status(const char *path,
-                     const svn_wc_status2_t *status,
+                     const svn_client_status_t *status,
                      svn_boolean_t detailed,
                      svn_boolean_t show_last_committed,
                      svn_boolean_t skip_unrecognized,
                      svn_boolean_t repos_locks,
+                     unsigned int *text_conflicts,
+                     unsigned int *prop_conflicts,
+                     unsigned int *tree_conflicts,
+                     svn_client_ctx_t *ctx,
                      apr_pool_t *pool);
 
 
@@ -382,32 +411,36 @@ svn_cl__print_status(const char *path,
    allocations. */
 svn_error_t *
 svn_cl__print_status_xml(const char *path,
-                         const svn_wc_status2_t *status,
+                         const svn_client_status_t *status,
+                         svn_client_ctx_t *ctx,
                          apr_pool_t *pool);
 
 
-/* Print a hash that maps property names (char *) to property values
-   (svn_string_t *).  The names are assumed to be in UTF-8 format;
+/* Print to stdout a hash that maps property names (char *) to property
+   values (svn_string_t *).  The names are assumed to be in UTF-8 format;
    the values are either in UTF-8 (the special Subversion props) or
    plain binary values.
+
+   If OUT is not NULL, then write to it rather than stdout.
 
    If NAMES_ONLY is true, print just names, else print names and
    values. */
 svn_error_t *
-svn_cl__print_prop_hash(apr_hash_t *prop_hash,
+svn_cl__print_prop_hash(svn_stream_t *out,
+                        apr_hash_t *prop_hash,
                         svn_boolean_t names_only,
                         apr_pool_t *pool);
 
-/* Same as svn_cl__print_prop_hash(), only output xml to OUTSTR.  If OUTSTR is
-   NULL, allocate it first from pool, otherwise append the xml to it. */
+/* Same as svn_cl__print_prop_hash(), only output xml to *OUTSTR.  If *OUTSTR is
+   NULL, allocate it first from POOL, otherwise append to it. */
 svn_error_t *
 svn_cl__print_xml_prop_hash(svn_stringbuf_t **outstr,
                             apr_hash_t *prop_hash,
                             svn_boolean_t names_only,
                             apr_pool_t *pool);
 
-/* Output a commit xml element to OUTSTR.  IF OUTSTR is NULL, allocate it
-   first from pool, otherwise appen the xml to it.  If AUTHOR or DATE is
+/* Output a commit xml element to *OUTSTR.  If *OUTSTR is NULL, allocate it
+   first from POOL, otherwise append to it.  If AUTHOR or DATE is
    NULL, it will be omitted. */
 void
 svn_cl__print_xml_commit(svn_stringbuf_t **outstr,
@@ -416,16 +449,25 @@ svn_cl__print_xml_commit(svn_stringbuf_t **outstr,
                          const char *date,
                          apr_pool_t *pool);
 
+/* Output an XML "<lock>" element describing LOCK to *OUTSTR.  If *OUTSTR is
+   NULL, allocate it first from POOL, otherwise append to it. */
+void
+svn_cl__print_xml_lock(svn_stringbuf_t **outstr,
+                       const svn_lock_t *lock,
+                       apr_pool_t *pool);
+
 /* Do the following things that are commonly required before accessing revision
    properties.  Ensure that REVISION is specified explicitly and is not
    relative to a working-copy item.  Ensure that exactly one target is
    specified in TARGETS.  Set *URL to the URL of the target.  Return an
-   appropriate error if any of those checks or operations fail.
+   appropriate error if any of those checks or operations fail. Use CTX for
+   accessing the working copy
  */
 svn_error_t *
 svn_cl__revprop_prepare(const svn_opt_revision_t *revision,
-                        apr_array_header_t *targets,
+                        const apr_array_header_t *targets,
                         const char **URL,
+                        svn_client_ctx_t *ctx,
                         apr_pool_t *pool);
 
 /* Search for a text editor command in standard environment variables,
@@ -511,23 +553,53 @@ svn_cl__merge_file_externally(const char *base_path,
 /* Set *NOTIFY_FUNC_P and *NOTIFY_BATON_P to a notifier/baton for all
  * operations, allocated in POOL.
  *
- * If this is a checkout, set IS_CHECKOUT to true, so that the
- * notifier will print the appropriate summary line at the end of the
- * output.
- *
- * If this is an export, set IS_EXPORT to true, so that the
- * notifier will print the appropriate summary line at the end of the
- * output.
- *
  * If don't want a summary line at the end of notifications, set
  * SUPPRESS_FINAL_LINE.
  */
-void svn_cl__get_notifier(svn_wc_notify_func2_t *notify_func_p,
-                          void **notify_baton_p,
-                          svn_boolean_t is_checkout,
-                          svn_boolean_t is_export,
-                          svn_boolean_t suppress_final_line,
-                          apr_pool_t *pool);
+svn_error_t *
+svn_cl__get_notifier(svn_wc_notify_func2_t *notify_func_p,
+                     void **notify_baton_p,
+                     svn_boolean_t suppress_final_line,
+                     apr_pool_t *pool);
+
+/* Make the notifier for use with BATON print the appropriate summary
+ * line at the end of the output.
+ */
+svn_error_t *
+svn_cl__notifier_mark_checkout(void *baton);
+
+/* Make the notifier for use with BATON print the appropriate summary
+ * line at the end of the output.
+ */
+svn_error_t *
+svn_cl__notifier_mark_export(void *baton);
+
+/* Make the notifier for use with BATON print the appropriate notifications
+ * for a wc to repository copy
+ */
+svn_error_t *
+svn_cl__notifier_mark_wc_to_repos_copy(void *baton);
+
+/* Baton for use with svn_cl__check_externals_failed_notify_wrapper(). */
+struct svn_cl__check_externals_failed_notify_baton
+{
+  svn_wc_notify_func2_t wrapped_func; /* The "real" notify_func2. */
+  void *wrapped_baton;                /* The "real" notify_func2 baton. */
+  svn_boolean_t had_externals_error;  /* Did something fail in an external? */
+};
+
+/* Notification function wrapper (implements `svn_wc_notify_func2_t').
+   Use with an svn_cl__check_externals_failed_notify_baton BATON. */
+void
+svn_cl__check_externals_failed_notify_wrapper(void *baton,
+                                              const svn_wc_notify_t *n,
+                                              apr_pool_t *pool);
+
+/* Print conflict stats accumulated in NOTIFY_BATON.
+ * Return any error encountered during printing.
+ * Do all allocations in POOL.*/
+svn_error_t *
+svn_cl__print_conflict_stats(void *notify_baton, apr_pool_t *pool);
 
 
 /*** Log message callback stuffs. ***/
@@ -584,7 +656,10 @@ svn_cl__cleanup_log_msg(void *log_msg_baton,
 svn_error_t *
 svn_cl__may_need_force(svn_error_t *err);
 
-/* Write the STRING to the stdio STREAM, returning an error if it fails. */
+/* Write the STRING to the stdio STREAM, returning an error if it fails.
+
+   This function is equal to svn_cmdline_fputs() minus the utf8->local
+   encoding translation.  */
 svn_error_t *
 svn_cl__error_checked_fputs(const char *string, FILE* stream);
 
@@ -597,12 +672,12 @@ svn_cl__xml_tagged_cdata(svn_stringbuf_t **sb,
                          const char *string);
 
 /* Print the XML prolog and document root element start-tag to stdout, using
-   TAGNAME as the root element name.  Use pool for temporary allocations. */
+   TAGNAME as the root element name.  Use POOL for temporary allocations. */
 svn_error_t *
 svn_cl__xml_print_header(const char *tagname, apr_pool_t *pool);
 
 /* Print the XML document root element end-tag to stdout, using TAGNAME as the
-   root element name.  Use pool for temporary allocations. */
+   root element name.  Use POOL for temporary allocations. */
 svn_error_t *
 svn_cl__xml_print_footer(const char *tagname, apr_pool_t *pool);
 
@@ -647,20 +722,27 @@ svn_cl__check_boolean_prop_val(const char *propname,
 
 /* De-streamifying wrapper around svn_client_get_changelists(), which
    is called for each target in TARGETS to populate *PATHS (a list of
-   paths assigned to one of the CHANGELISTS. */
+   paths assigned to one of the CHANGELISTS.
+   If all targets are to be included, may set *PATHS to TARGETS without
+   reallocating. */
 svn_error_t *
 svn_cl__changelist_paths(apr_array_header_t **paths,
                          const apr_array_header_t *changelists,
                          const apr_array_header_t *targets,
                          svn_depth_t depth,
                          svn_client_ctx_t *ctx,
-                         apr_pool_t *pool);
+                         apr_pool_t *result_pool,
+                         apr_pool_t *scratch_pool);
 
+/* Like svn_client_args_to_target_array() but, if the only error is that some
+ * arguments are reserved file names, then print warning messages for those
+ * targets, store the rest of the targets in TARGETS_P and return success. */
 svn_error_t *
 svn_cl__args_to_target_array_print_reserved(apr_array_header_t **targets_p,
                                             apr_getopt_t *os,
-                                            apr_array_header_t *known_targets,
+                                            const apr_array_header_t *known_targets,
                                             svn_client_ctx_t *ctx,
+                                            svn_boolean_t keep_dest_origpath_on_truepath_collision,
                                             apr_pool_t *pool);
 
 /* Return a string allocated in POOL that is a copy of STR but with each
@@ -673,10 +755,83 @@ svn_cl__indent_string(const char *str,
 
 
 /* Return a string showing NODE's kind, URL and revision, to the extent that
- * that information is available in NODE. */
+ * that information is available in NODE. If NODE itself is NULL, this prints
+ * just a 'none' node kind.
+ * WC_REPOS_ROOT_URL should reflect the target working copy's repository
+ * root URL. If NODE is from that same URL, the printed URL is abbreviated
+ * to caret notation (^/). WC_REPOS_ROOT_URL may be NULL, in which case
+ * this function tries to print the conflicted node's complete URL. */
 const char *
 svn_cl__node_description(const svn_wc_conflict_version_t *node,
+                         const char *wc_repos_root_URL,
                          apr_pool_t *pool);
+
+/* Return, in @a *true_targets_p, a copy of @a targets with peg revision
+ * specifiers snipped off the end of each element.
+ *
+ * ### JAF TODO: This function is not good because it does not allow the
+ * ### caller to detect if an invalid peg revision was specified.
+ * ###
+ * ### Callers should never have a need to silently *discard* all peg
+ * ### revisions, even if they are doing this *after* saving any peg
+ * ### revisions that might be of interest on certain arguments: I don't
+ * ### think it can ever be correct to silently ignore a peg revision that
+ * ### is specified, whether it makes semantic sense or not.
+ * ###
+ * ### Instead, callers should parse all the arguments and silently
+ * ### ignore an *empty* peg revision part (just an "@", which can be
+ * ### used to escape an earlier "@" in the argument) on any argument,
+ * ### even an argument on which a peg revision does not make sense,
+ * ### but should not silently ignore a non-empty peg when it does not
+ * ### make sense.
+ * ###
+ * ### Something like:
+ * ###   For each (URL-like?) argument that doesn't accept a peg rev:
+ * ###     Parse into peg-rev and true-path parts;
+ * ###     If (peg rev != unspecified)
+ * ###       Error("This arg doesn't accept a peg rev.").
+ * ###     Use the true-path part.
+ *
+ * This function is useful for subcommands for which peg revisions
+ * do not make any sense. Such subcommands still need to allow peg
+ * revisions to be specified on the command line so that users of
+ * the command line client can consistently escape '@' characters
+ * in filenames by appending an '@' character, regardless of the
+ * subcommand being used.
+ *
+ * If a peg revision is present but cannot be parsed, an error is thrown.
+ * The user has likely forgotten to escape an '@' character in a filename.
+ *
+ * It is safe to pass the address of @a targets as @a true_targets_p.
+ *
+ * Do all allocations in @a pool. */
+svn_error_t *
+svn_cl__eat_peg_revisions(apr_array_header_t **true_targets_p,
+                          const apr_array_header_t *targets,
+                          apr_pool_t *pool);
+
+/* Return an error if TARGETS contains a mixture of URLs and paths; otherwise
+ * return SVN_NO_ERROR. */
+svn_error_t *
+svn_cl__assert_homogeneous_target_type(const apr_array_header_t *targets);
+
+/* Return an error if TARGETS contains a URL; otherwise return SVN_NO_ERROR. */
+svn_error_t *
+svn_cl__check_targets_are_local_paths(const apr_array_header_t *targets);
+
+/* Return an error if TARGET is a URL; otherwise return SVN_NO_ERROR. */
+svn_error_t *
+svn_cl__check_target_is_local_path(const char *target);
+
+/* Return a copy of PATH, converted to the local path style, skipping
+ * PARENT_PATH if it is non-null and is a parent of or equal to PATH.
+ *
+ * This function assumes PARENT_PATH and PATH are both absolute "dirents"
+ * or both relative "dirents". */
+const char *
+svn_cl__local_style_skip_ancestor(const char *parent_path,
+                                  const char *path,
+                                  apr_pool_t *pool);
 
 #ifdef __cplusplus
 }

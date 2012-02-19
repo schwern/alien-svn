@@ -1,17 +1,22 @@
 /* fs.c --- creating, opening and closing filesystems
  *
  * ====================================================================
- * Copyright (c) 2000-2007, 2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -314,7 +319,7 @@ static svn_error_t *
 bdb_write_config(svn_fs_t *fs)
 {
   const char *dbconfig_file_name =
-    svn_path_join(fs->path, BDB_CONFIG_FILE, fs->pool);
+    svn_dirent_join(fs->path, BDB_CONFIG_FILE, fs->pool);
   apr_file_t *dbconfig_file = NULL;
   int i;
 
@@ -651,20 +656,19 @@ base_create(svn_fs_t *fs, const char *path, apr_pool_t *pool,
   int format = SVN_FS_BASE__FORMAT_NUMBER;
   svn_error_t *svn_err;
 
-  /* See if we had an explicitly specified pre-1.5-compatible.  */
-  if (fs->config && apr_hash_get(fs->config, SVN_FS_CONFIG_PRE_1_6_COMPATIBLE,
-                                 APR_HASH_KEY_STRING))
-    format = 3;
-
-  /* See if we had an explicitly specified pre-1.5-compatible.  */
-  if (fs->config && apr_hash_get(fs->config, SVN_FS_CONFIG_PRE_1_5_COMPATIBLE,
-                                 APR_HASH_KEY_STRING))
-    format = 2;
-
-  /* See if we had an explicitly specified pre-1.4-compatible.  */
-  if (fs->config && apr_hash_get(fs->config, SVN_FS_CONFIG_PRE_1_4_COMPATIBLE,
-                                 APR_HASH_KEY_STRING))
-    format = 1;
+  /* See if compatibility with older versions was explicitly requested. */
+  if (fs->config)
+    {
+      if (apr_hash_get(fs->config, SVN_FS_CONFIG_PRE_1_4_COMPATIBLE,
+                                   APR_HASH_KEY_STRING))
+        format = 1;
+      else if (apr_hash_get(fs->config, SVN_FS_CONFIG_PRE_1_5_COMPATIBLE,
+                                        APR_HASH_KEY_STRING))
+        format = 2;
+      else if (apr_hash_get(fs->config, SVN_FS_CONFIG_PRE_1_6_COMPATIBLE,
+                                        APR_HASH_KEY_STRING))
+        format = 3;
+    }
 
   /* Create the environment and databases. */
   svn_err = open_databases(fs, TRUE, format, path, pool);
@@ -675,8 +679,8 @@ base_create(svn_fs_t *fs, const char *path, apr_pool_t *pool,
   if (svn_err) goto error;
 
   /* This filesystem is ready.  Stamp it with a format number. */
-  svn_err = svn_io_write_version_file
-    (svn_path_join(fs->path, FORMAT_FILE, pool), format, pool);
+  svn_err = svn_io_write_version_file(
+   svn_dirent_join(fs->path, FORMAT_FILE, pool), format, pool);
   if (svn_err) goto error;
 
   ((base_fs_data_t *) fs->fsap_data)->format = format;
@@ -732,7 +736,7 @@ base_open(svn_fs_t *fs, const char *path, apr_pool_t *pool,
 
   /* Read the FS format number. */
   svn_err = svn_io_read_version_file(&format,
-                                     svn_path_join(path, FORMAT_FILE, pool),
+                                     svn_dirent_join(path, FORMAT_FILE, pool),
                                      pool);
   if (svn_err && APR_STATUS_IS_ENOENT(svn_err->apr_err))
     {
@@ -758,8 +762,9 @@ base_open(svn_fs_t *fs, const char *path, apr_pool_t *pool,
   /* If we lack a format file, write one. */
   if (write_format_file)
     {
-      svn_err = svn_io_write_version_file(svn_path_join(path, FORMAT_FILE,
-                                                        pool), format, pool);
+      svn_err = svn_io_write_version_file(svn_dirent_join(path, FORMAT_FILE,
+                                                        pool),
+                                          format, pool);
       if (svn_err) goto error;
     }
 
@@ -821,7 +826,7 @@ base_upgrade(svn_fs_t *fs, const char *path, apr_pool_t *pool,
   int old_format_number;
   svn_error_t *err;
 
-  version_file_path = svn_path_join(path, FORMAT_FILE, pool);
+  version_file_path = svn_dirent_join(path, FORMAT_FILE, pool);
 
   /* Read the old number so we've got it on hand later on. */
   err = svn_io_read_version_file(&old_format_number, version_file_path, pool);
@@ -958,8 +963,8 @@ svn_fs_base__clean_logs(const char *live_path,
         const char *backup_log_path;
 
         svn_pool_clear(sub_pool);
-        live_log_path = svn_path_join(live_path, log_file, sub_pool);
-        backup_log_path = svn_path_join(backup_path, log_file, sub_pool);
+        live_log_path = svn_dirent_join(live_path, log_file, sub_pool);
+        backup_log_path = svn_dirent_join(backup_path, log_file, sub_pool);
 
         { /* Compare files. No point in using MD5 and wasting CPU cycles as we
              got full copies of both logs */
@@ -983,7 +988,7 @@ svn_fs_base__clean_logs(const char *live_path,
             continue;
         }
 
-        SVN_ERR(svn_io_remove_file(live_log_path, sub_pool));
+        SVN_ERR(svn_io_remove_file2(live_log_path, FALSE, sub_pool));
       }
 
     svn_pool_destroy(sub_pool);
@@ -1079,8 +1084,8 @@ copy_db_file_safely(const char *src_dir,
                     apr_pool_t *pool)
 {
   apr_file_t *s = NULL, *d = NULL;  /* init to null important for APR */
-  const char *file_src_path = svn_path_join(src_dir, filename, pool);
-  const char *file_dst_path = svn_path_join(dst_dir, filename, pool);
+  const char *file_src_path = svn_dirent_join(src_dir, filename, pool);
+  const char *file_dst_path = svn_dirent_join(dst_dir, filename, pool);
   svn_error_t *err;
   char *buf;
 
@@ -1166,8 +1171,8 @@ base_hotcopy(const char *src_path,
      complained, it apparently isn't much of a concern.  (We did not check
      the 'format' file in 1.2.x, but we did blindly try to copy 'locks',
      which would have errored just the same.)  */
-  SVN_ERR(svn_io_read_version_file
-          (&format, svn_path_join(src_path, FORMAT_FILE, pool), pool));
+  SVN_ERR(svn_io_read_version_file(
+          &format, svn_dirent_join(src_path, FORMAT_FILE, pool), pool));
   SVN_ERR(check_format(format));
 
   /* If using Berkeley DB 4.2 or later, note whether the DB_LOG_AUTO_REMOVE
@@ -1265,7 +1270,7 @@ base_hotcopy(const char *src_path,
                    "the problem persists, try deactivating this feature\n"
                    "in DB_CONFIG"));
             else
-              return err;
+              return svn_error_trace(err);
           }
       }
     svn_pool_destroy(subpool);
@@ -1284,15 +1289,15 @@ base_hotcopy(const char *src_path,
              "hotcopy algorithm.  If the problem persists, try deactivating\n"
              "this feature in DB_CONFIG"));
       else
-        return err;
+        return svn_error_trace(err);
     }
 
   /* Only now that the hotcopied filesystem is complete,
      stamp it with a format file. */
-  SVN_ERR(svn_io_write_version_file
-          (svn_path_join(dest_path, FORMAT_FILE, pool), format, pool));
+  SVN_ERR(svn_io_write_version_file(
+             svn_dirent_join(dest_path, FORMAT_FILE, pool), format, pool));
 
-  if (clean_logs == TRUE)
+  if (clean_logs)
     SVN_ERR(svn_fs_base__clean_logs(src_path, dest_path, pool));
 
   return SVN_NO_ERROR;

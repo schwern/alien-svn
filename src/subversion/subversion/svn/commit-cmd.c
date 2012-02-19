@@ -2,17 +2,22 @@
  * commit-cmd.c -- Check changes into the repository.
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -29,13 +34,61 @@
 #include "svn_wc.h"
 #include "svn_client.h"
 #include "svn_path.h"
+#include "svn_dirent_uri.h"
 #include "svn_error.h"
 #include "svn_config.h"
 #include "cl.h"
 
-/* We shouldn't be including a private header here, but it is
- * necessary for fixing issue #3416 */
-#include "private/svn_opt_private.h"
+#include "svn_private_config.h"
+
+
+
+/* Wrapper notify_func2 function and baton for warning about
+   reduced-depth commits of copied directories.  */
+struct copy_warning_notify_baton
+{
+  svn_wc_notify_func2_t wrapped_func;
+  void *wrapped_baton;
+  svn_depth_t depth;
+  svn_boolean_t warned;
+};
+
+static void
+copy_warning_notify_func(void *baton,
+                         const svn_wc_notify_t *notify,
+                         apr_pool_t *pool)
+{
+  struct copy_warning_notify_baton *b = baton;
+
+  /* Call the wrapped notification system (if any). */
+  if (b->wrapped_func)
+    b->wrapped_func(b->wrapped_baton, notify, pool);
+
+  /* If we're being notified about a copy of a directory when our
+     commit depth is less-than-infinite, and we've not already warned
+     about this situation, then warn about it (and remember that we
+     now have.)  */
+  if ((! b->warned)
+      && (b->depth < svn_depth_infinity)
+      && (notify->kind == svn_node_dir)
+      && ((notify->action == svn_wc_notify_commit_copied) ||
+          (notify->action == svn_wc_notify_commit_copied_replaced)))
+    {
+      svn_error_t *err;
+      err = svn_cmdline_printf(pool,
+                               _("svn: The depth of this commit is '%s', "
+                                 "but copies are always performed "
+                                 "recursively in the repository.\n"),
+                               svn_depth_to_word(b->depth));
+      /* ### FIXME: Try to return this error showhow? */
+      svn_error_clear(err);
+
+      /* We'll only warn once. */
+      b->warned = TRUE;
+    }
+}
+
+
 
 
 /* This implements the `svn_opt_subcommand_t' interface. */
@@ -52,48 +105,33 @@ svn_cl__commit(apr_getopt_t *os,
   const char *base_dir;
   svn_config_t *cfg;
   svn_boolean_t no_unlock = FALSE;
-  svn_commit_info_t *commit_info = NULL;
-  int i;
+  struct copy_warning_notify_baton cwnb;
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
                                                       opt_state->targets,
-                                                      ctx, pool));
+                                                      ctx, FALSE, pool));
 
-  /* Check that no targets are URLs */
-  for (i = 0; i < targets->nelts; i++)
-    {
-      const char *target = APR_ARRAY_IDX(targets, i, const char *);
-      if (svn_path_is_url(target))
-        return svn_error_create(SVN_ERR_WC_BAD_PATH, NULL,
-                                "Must give local path (not URL) as the "
-                                "target of a commit");
-    }
+  SVN_ERR_W(svn_cl__check_targets_are_local_paths(targets),
+            _("Commit targets must be local paths"));
 
   /* Add "." if user passed 0 arguments. */
   svn_opt_push_implicit_dot_target(targets, pool);
 
-  SVN_ERR(svn_opt__eat_peg_revisions(&targets, targets, pool));
+  SVN_ERR(svn_cl__eat_peg_revisions(&targets, targets, pool));
 
   /* Condense the targets (like commit does)... */
-  SVN_ERR(svn_path_condense_targets(&base_dir,
-                                    &condensed_targets,
-                                    targets,
-                                    TRUE,
-                                    pool));
+  SVN_ERR(svn_dirent_condense_targets(&base_dir, &condensed_targets, targets,
+                                      TRUE, pool, pool));
 
   if ((! condensed_targets) || (! condensed_targets->nelts))
     {
       const char *parent_dir, *base_name;
 
-      SVN_ERR(svn_wc_get_actual_target(base_dir, &parent_dir,
-                                       &base_name, pool));
+      SVN_ERR(svn_wc_get_actual_target2(&parent_dir, &base_name, ctx->wc_ctx,
+                                        base_dir, pool, pool));
       if (*base_name)
         base_dir = apr_pstrdup(pool, parent_dir);
     }
-
-  if (! opt_state->quiet)
-    svn_cl__get_notifier(&ctx->notify_func2, &ctx->notify_baton2, FALSE,
-                         FALSE, FALSE, pool);
 
   if (opt_state->depth == svn_depth_unknown)
     opt_state->depth = svn_depth_infinity;
@@ -113,33 +151,34 @@ svn_cl__commit(apr_getopt_t *os,
                                      opt_state, base_dir,
                                      ctx->config, pool));
 
+  /* Copies are done server-side, and cheaply, which means they're
+     effectively always done with infinite depth.  This is a potential
+     cause of confusion for users trying to commit copied subtrees in
+     part by restricting the commit's depth.  See issues #3699 and #3752. */
+  if (opt_state->depth < svn_depth_infinity)
+    {
+      cwnb.wrapped_func = ctx->notify_func2;
+      cwnb.wrapped_baton = ctx->notify_baton2;
+      cwnb.depth = opt_state->depth;
+      cwnb.warned = FALSE;
+      ctx->notify_func2 = copy_warning_notify_func;
+      ctx->notify_baton2 = &cwnb;
+    }
+
   /* Commit. */
-  err = svn_client_commit4(&commit_info,
-                           targets,
+  err = svn_client_commit5(targets,
                            opt_state->depth,
                            no_unlock,
                            opt_state->keep_changelists,
+                           TRUE /* commit_as_operations */,
                            opt_state->changelists,
                            opt_state->revprop_table,
+                           (opt_state->quiet
+                            ? NULL : svn_cl__print_commit_info),
+                           NULL,
                            ctx,
                            pool);
-  if (err)
-    {
-      svn_error_t *root_err = svn_error_root_cause(err);
-      if (root_err->apr_err == SVN_ERR_UNKNOWN_CHANGELIST)
-        {
-          /* Strip any errors wrapped around this root cause.  Note
-             that this handling differs from that of any other
-             commands, because of the way 'commit' internally harvests
-             its list of committables. */
-          root_err = svn_error_dup(root_err);
-          svn_error_clear(err);
-          err = root_err;
-        }
-    }
   SVN_ERR(svn_cl__cleanup_log_msg(ctx->log_msg_baton3, err, pool));
-  if (! err && ! opt_state->quiet)
-    SVN_ERR(svn_cl__print_commit_info(commit_info, pool));
 
   return SVN_NO_ERROR;
 }

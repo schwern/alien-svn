@@ -2,17 +2,22 @@
  * checksum.c:   checksum routines
  *
  * ====================================================================
- * Copyright (c) 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -24,9 +29,12 @@
 
 #include "svn_checksum.h"
 #include "svn_error.h"
+#include "svn_ctype.h"
 
 #include "sha1.h"
 #include "md5.h"
+
+#include "svn_private_config.h"
 
 
 
@@ -129,6 +137,9 @@ const char *
 svn_checksum_to_cstring(const svn_checksum_t *checksum,
                         apr_pool_t *pool)
 {
+  if (checksum == NULL)
+    return NULL;
+
   switch (checksum->kind)
     {
       case svn_checksum_md5:
@@ -141,15 +152,71 @@ svn_checksum_to_cstring(const svn_checksum_t *checksum,
     }
 }
 
+
+const char *
+svn_checksum_serialize(const svn_checksum_t *checksum,
+                       apr_pool_t *result_pool,
+                       apr_pool_t *scratch_pool)
+{
+  const char *ckind_str;
+
+  ckind_str = (checksum->kind == svn_checksum_md5 ? "$md5 $" : "$sha1$");
+  return apr_pstrcat(result_pool,
+                     ckind_str,
+                     svn_checksum_to_cstring(checksum, scratch_pool),
+                     (char *)NULL);
+}
+
+
+svn_error_t *
+svn_checksum_deserialize(const svn_checksum_t **checksum,
+                         const char *data,
+                         apr_pool_t *result_pool,
+                         apr_pool_t *scratch_pool)
+{
+  svn_checksum_kind_t ckind;
+  svn_checksum_t *parsed_checksum;
+
+  /* "$md5 $..." or "$sha1$..." */
+  SVN_ERR_ASSERT(strlen(data) > 6);
+
+  ckind = (data[1] == 'm' ? svn_checksum_md5 : svn_checksum_sha1);
+  SVN_ERR(svn_checksum_parse_hex(&parsed_checksum, ckind,
+                                 data + 6, result_pool));
+  *checksum = parsed_checksum;
+
+  return SVN_NO_ERROR;
+}
+
+
 svn_error_t *
 svn_checksum_parse_hex(svn_checksum_t **checksum,
                        svn_checksum_kind_t kind,
                        const char *hex,
                        apr_pool_t *pool)
 {
-  int len;
-  int i;
-  unsigned char is_zeros = '\0';
+  int i, len;
+  char is_nonzero = '\0';
+  char *digest;
+  static const char xdigitval[256] =
+    {
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+       0, 1, 2, 3, 4, 5, 6, 7, 8, 9,-1,-1,-1,-1,-1,-1,   /* 0-9 */
+      -1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,   /* A-F */
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,   /* a-f */
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    };
 
   if (hex == NULL)
     {
@@ -160,20 +227,21 @@ svn_checksum_parse_hex(svn_checksum_t **checksum,
   SVN_ERR(validate_kind(kind));
 
   *checksum = svn_checksum_create(kind, pool);
+  digest = (char *)(*checksum)->digest;
   len = DIGESTSIZE(kind);
 
   for (i = 0; i < len; i++)
     {
-      if ((! isxdigit(hex[i * 2])) || (! isxdigit(hex[i * 2 + 1])))
+      char x1 = xdigitval[(unsigned char)hex[i * 2]];
+      char x2 = xdigitval[(unsigned char)hex[i * 2 + 1]];
+      if (x1 == (char)-1 || x2 == (char)-1)
         return svn_error_create(SVN_ERR_BAD_CHECKSUM_PARSE, NULL, NULL);
 
-      ((unsigned char *)(*checksum)->digest)[i] =
-        (( isalpha(hex[i*2]) ? hex[i*2] - 'a' + 10 : hex[i*2] - '0') << 4) |
-        ( isalpha(hex[i*2+1]) ? hex[i*2+1] - 'a' + 10 : hex[i*2+1] - '0');
-      is_zeros |= (*checksum)->digest[i];
+      digest[i] = (x1 << 4) | x2;
+      is_nonzero |= (x1 << 4) | x2;
     }
 
-  if (is_zeros == '\0')
+  if (!is_nonzero)
     *checksum = NULL;
 
   return SVN_NO_ERROR;
@@ -331,4 +399,27 @@ apr_size_t
 svn_checksum_size(const svn_checksum_t *checksum)
 {
   return DIGESTSIZE(checksum->kind);
+}
+
+svn_error_t *
+svn_checksum_mismatch_err(const svn_checksum_t *expected,
+                          const svn_checksum_t *actual,
+                          apr_pool_t *scratch_pool,
+                          const char *fmt,
+                          ...)
+{
+  va_list ap;
+  const char *desc;
+
+  va_start(ap, fmt);
+  desc = apr_pvsprintf(scratch_pool, fmt, ap);
+  va_end(ap);
+
+  return svn_error_createf(SVN_ERR_CHECKSUM_MISMATCH, NULL,
+                           _("%s:\n"
+                             "   expected:  %s\n"
+                             "     actual:  %s\n"),
+                desc,
+                svn_checksum_to_cstring_display(expected, scratch_pool),
+                svn_checksum_to_cstring_display(actual, scratch_pool));
 }

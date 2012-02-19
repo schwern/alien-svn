@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2005-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  */
@@ -66,12 +71,15 @@ static svn_error_t *compat_open(void **session_baton,
    * the alternative (creating a new ra_util library) would be massive
    * overkill for the time being.  Just be sure to keep the following
    * line and the code of svn_ra_create_callbacks in sync.  */
-  svn_ra_callbacks2_t *callbacks2 = apr_pcalloc(pool,
+  apr_pool_t *sesspool = svn_pool_create(pool);
+  svn_ra_callbacks2_t *callbacks2 = apr_pcalloc(sesspool,
                                                 sizeof(*callbacks2));
 
-  svn_ra_session_t *sess = apr_pcalloc(pool, sizeof(*sess));
+  svn_ra_session_t *sess = apr_pcalloc(sesspool, sizeof(*sess));
+  const char *session_url;
+
   sess->vtable = &VTBL;
-  sess->pool = pool;
+  sess->pool = sesspool;
 
   callbacks2->open_tmp_file = callbacks->open_tmp_file;
   callbacks2->auth_baton = callbacks->auth_baton;
@@ -82,8 +90,18 @@ static svn_error_t *compat_open(void **session_baton,
   callbacks2->progress_func = NULL;
   callbacks2->progress_baton = NULL;
 
-  SVN_ERR(VTBL.open_session(sess, repos_URL, callbacks2, callback_baton,
-                            config, pool));
+  SVN_ERR(VTBL.open_session(sess, &session_url, repos_URL,
+                            callbacks2, callback_baton, config, sesspool));
+
+  if (strcmp(repos_URL, session_url) != 0)
+    {
+      svn_pool_destroy(sesspool);
+      return svn_error_createf(SVN_ERR_RA_SESSION_URL_MISMATCH, NULL,
+                               _("Session URL '%s' does not match requested "
+                                 " URL '%s', and redirection was disallowed."),
+                               session_url, repos_URL);
+    }
+
   *session_baton = sess;
   return SVN_NO_ERROR;
 }
@@ -109,7 +127,7 @@ static svn_error_t *compat_change_rev_prop(void *session_baton,
                                            const svn_string_t *value,
                                            apr_pool_t *pool)
 {
-  return VTBL.change_rev_prop(session_baton, rev, propname, value, pool);
+  return VTBL.change_rev_prop(session_baton, rev, propname, NULL, value, pool);
 }
 
 static svn_error_t *compat_rev_proplist(void *session_baton,

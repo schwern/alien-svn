@@ -46,8 +46,8 @@ SVN::Client - Subversion client functions
               SVN::Client::get_username_provider()]
               );
 
-    $ctx->cat (\*STDOUT, 'http://svn.apache.org/repos/asf/subversion/trunk/README',
-               'HEAD');
+    $ctx->cat(\*STDOUT, 'http://svn.apache.org/repos/asf/subversion/trunk/README',
+              'HEAD');
 
     sub simple_prompt {
       my $cred = shift;
@@ -197,7 +197,7 @@ sub new
     my $self = bless {}, $class;
     my %args = @_;
 
-    $self->{'ctx'} = SVN::_Client::svn_client_create_context ();
+    $self->{'ctx'} = SVN::_Client::svn_client_create_context();
 
     if (defined($args{'auth'}))
     {
@@ -1019,9 +1019,9 @@ message for any operation that will commit a revision to the repo.
 
 It receives 4 parameters.  The first parameter is a reference to a scalar
 value in which the callback should place the log_msg.  If you wish to cancel
-the commit you can set this scalar to undef.  The 2nd value is a path to a
+the commit you can set this scalar to undef.  The 2nd value is a path to any
 temporary file which might be holding that log message, or undef if no such
-field exists (though, if log_msg is undef, this value is undefined).  The
+file exists (though, if log_msg is undef, this value is undefined).  The
 log message B<MUST> be a UTF8 string with LF line separators.  The 3rd parameter
 is a reference to an array of svn_client_commit_item3_t objects, which may
 be fully or only partially filled-in, depending on the type of commit
@@ -1044,7 +1044,7 @@ sub log_msg {
 
 =item $ctx-E<gt>cancel(\&cancel)
 
-Sets the log_msg callback for the client context to a code reference that you
+Sets the cancellation callback for the client context to a code reference that you
 pass.  It always returns the current codereference set.
 
 The subroutine pointed to by this value will be called to see if the operation
@@ -1448,8 +1448,6 @@ An enum of the following constants:
 $SVN::Client::Summarize::normal, $SVN::Client::Summarize::added,
 $SVN::Client::Summarize::modified, $SVN::Client::Summarize::deleted.
 
-=back
-
 =cut
 
 package _p_svn_client_diff_summarize_t;
@@ -1494,17 +1492,22 @@ Ben Reser E<lt>ben@reser.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2003 CollabNet.  All rights reserved.
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
 
-This software is licensed as described in the file COPYING, which you
-should have received as part of this distribution.  The terms are also
-available at http://subversion.tigris.org/license-1.html.  If newer
-versions of this license are posted there, you may use a newer version
-instead, at your option.
+      http://www.apache.org/licenses/LICENSE-2.0
 
-This software consists of voluntary contributions made by many
-individuals.  For exact contribution history, see the revision history
-and logs, available at http://subversion.tigris.org/.
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
 
 =cut
 

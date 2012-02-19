@@ -1,19 +1,25 @@
 /*
- * get-location-segments.c: mod_dav_svn versioning provider functions
- *                          for Subversion's get-location-segments RA API.
+ * get-location-segments.c: mod_dav_svn REPORT handler for mapping
+ *                          revision ranges to path locations along
+ *                          the history of an object
  *
  * ====================================================================
- * Copyright (c) 2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -34,6 +40,8 @@
 #include "svn_dav.h"
 #include "svn_base64.h"
 
+#include "private/svn_fspath.h"
+
 #include "../dav_svn.h"
 
 
@@ -53,10 +61,10 @@ maybe_send_opener(struct location_segment_baton *b)
 {
   if (! b->sent_opener)
     {
-      SVN_ERR(dav_svn__send_xml(b->bb, b->output, DAV_XML_HEADER DEBUG_CR
-                                "<S:get-location-segments-report xmlns:S=\""
-                                SVN_XML_NAMESPACE "\" xmlns:D=\"DAV:\">"
-                                DEBUG_CR));
+      SVN_ERR(dav_svn__brigade_puts(b->bb, b->output, DAV_XML_HEADER DEBUG_CR
+                                    "<S:get-location-segments-report "
+                                    "xmlns:S=\"" SVN_XML_NAMESPACE
+                                    "\" xmlns:D=\"DAV:\">" DEBUG_CR));
       b->sent_opener = TRUE;
     }
   return SVN_NO_ERROR;
@@ -107,7 +115,7 @@ dav_svn__get_location_segments_report(const dav_resource *resource,
   apr_bucket_brigade *bb;
   int ns;
   apr_xml_elem *child;
-  const char *path = NULL;
+  const char *abs_path = NULL;
   svn_revnum_t peg_revision = SVN_INVALID_REVNUM;
   svn_revnum_t start_rev = SVN_INVALID_REVNUM;
   svn_revnum_t end_rev = SVN_INVALID_REVNUM;
@@ -150,16 +158,22 @@ dav_svn__get_location_segments_report(const dav_resource *resource,
         }
       else if (strcmp(child->name, "path") == 0)
         {
-          path = dav_xml_get_cdata(child, resource->pool, 0);
-          if ((derr = dav_svn__test_canonical(path, resource->pool)))
+          const char *rel_path = dav_xml_get_cdata(child, resource->pool, 0);
+          if ((derr = dav_svn__test_canonical(rel_path, resource->pool)))
             return derr;
-          path = svn_path_join(resource->info->repos_path, path,
-                               resource->pool);
+
+          /* Force REL_PATH to be a relative path, not an fspath. */
+          rel_path = svn_relpath_canonicalize(rel_path, resource->pool);
+
+          /* Append the REL_PATH to the base FS path to get an
+             absolute repository path. */
+          abs_path = svn_fspath__join(resource->info->repos_path, rel_path,
+                                      resource->pool);
         }
     }
 
-  /* Check our inputs. */
-  if (! path)
+  /* Check that all parameters are present and valid. */
+  if (! abs_path)
     return dav_svn__new_error_tag(resource->pool, HTTP_BAD_REQUEST, 0,
                                   "Not all parameters passed.",
                                   SVN_DAV_ERROR_NAMESPACE,
@@ -193,7 +207,7 @@ dav_svn__get_location_segments_report(const dav_resource *resource,
   location_segment_baton.output = output;
   location_segment_baton.bb = bb;
   if ((serr = svn_repos_node_location_segments(resource->info->repos->repos,
-                                               path, peg_revision,
+                                               abs_path, peg_revision,
                                                start_rev, end_rev,
                                                location_segment_receiver,
                                                &location_segment_baton,
@@ -213,8 +227,9 @@ dav_svn__get_location_segments_report(const dav_resource *resource,
       goto cleanup;
     }
 
-  if ((serr = dav_svn__send_xml(bb, output,
-                                "</S:get-location-segments-report>" DEBUG_CR)))
+  if ((serr = dav_svn__brigade_puts(bb, output,
+                                    "</S:get-location-segments-report>"
+                                    DEBUG_CR)))
     {
       derr = dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,
                                   "Error ending REPORT response.",

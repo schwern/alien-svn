@@ -2,17 +2,22 @@
  * getlocks.c :  entry point for get_locks RA functions for ra_serf
  *
  * ====================================================================
- * Copyright (c) 2006-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -20,23 +25,20 @@
 
 #include <apr_uri.h>
 
-#include <expat.h>
-
 #include <serf.h>
 
+#include "svn_path.h"
 #include "svn_pools.h"
 #include "svn_ra.h"
 #include "svn_dav.h"
-#include "svn_xml.h"
-#include "../libsvn_ra/ra_loader.h"
-#include "svn_config.h"
-#include "svn_delta.h"
-#include "svn_version.h"
-#include "svn_path.h"
 #include "svn_time.h"
+#include "svn_xml.h"
 
 #include "private/svn_dav_protocol.h"
+#include "private/svn_fspath.h"
 #include "svn_private_config.h"
+
+#include "../libsvn_ra/ra_loader.h"
 
 #include "ra_serf.h"
 
@@ -44,7 +46,7 @@
 /*
  * This enum represents the current state of our XML parsing for a REPORT.
  */
-typedef enum {
+typedef enum lock_state_e {
   NONE = 0,
   REPORT,
   LOCK,
@@ -53,10 +55,10 @@ typedef enum {
   OWNER,
   COMMENT,
   CREATION_DATE,
-  EXPIRATION_DATE,
+  EXPIRATION_DATE
 } lock_state_e;
 
-typedef struct {
+typedef struct lock_info_t {
   /* Temporary pool */
   apr_pool_t *pool;
 
@@ -68,8 +70,12 @@ typedef struct {
 
 } lock_info_t;
 
-typedef struct {
+typedef struct lock_context_t {
   apr_pool_t *pool;
+
+  /* target and requested depth of the operation. */
+  const char *path;
+  svn_depth_t requested_depth;
 
   /* return hash */
   apr_hash_t *hash;
@@ -175,8 +181,32 @@ end_getlocks(svn_ra_serf__xml_parser_t *parser,
   else if (state == LOCK &&
            strcmp(name.name, "lock") == 0)
     {
-      apr_hash_set(lock_ctx->hash, info->lock->path, APR_HASH_KEY_STRING,
-                   info->lock);
+      /* Filter out unwanted paths.  Since Subversion only allows
+         locks on files, we can treat depth=immediates the same as
+         depth=files for filtering purposes.  Meaning, we'll keep
+         this lock if:
+
+         a) its path is the very path we queried, or
+         b) we've asked for a fully recursive answer, or
+         c) we've asked for depth=files or depth=immediates, and this
+            lock is on an immediate child of our query path.
+      */
+      if ((strcmp(lock_ctx->path, info->lock->path) == 0)
+          || (lock_ctx->requested_depth == svn_depth_infinity))
+        {
+          apr_hash_set(lock_ctx->hash, info->lock->path,
+                       APR_HASH_KEY_STRING, info->lock);
+        }
+      else if ((lock_ctx->requested_depth == svn_depth_files) ||
+               (lock_ctx->requested_depth == svn_depth_immediates))
+        {
+          const char *rel_path = svn_fspath__is_child(lock_ctx->path,
+                                                      info->lock->path,
+                                                      info->pool);
+          if (rel_path && (svn_path_component_count(rel_path) == 1))
+            apr_hash_set(lock_ctx->hash, info->lock->path,
+                         APR_HASH_KEY_STRING, info->lock);
+        }
 
       svn_ra_serf__xml_pop_state(parser);
     }
@@ -262,42 +292,51 @@ cdata_getlocks(svn_ra_serf__xml_parser_t *parser,
   return SVN_NO_ERROR;
 }
 
-static serf_bucket_t*
-create_getlocks_body(void *baton,
+/* Implements svn_ra_serf__request_body_delegate_t */
+static svn_error_t *
+create_getlocks_body(serf_bucket_t **body_bkt,
+                     void *baton,
                      serf_bucket_alloc_t *alloc,
                      apr_pool_t *pool)
 {
+  lock_context_t *lock_ctx = baton;
   serf_bucket_t *buckets;
 
   buckets = serf_bucket_aggregate_create(alloc);
 
-  svn_ra_serf__add_open_tag_buckets(buckets, alloc, "S:get-locks-report",
-                                    "xmlns:S", SVN_XML_NAMESPACE,
-                                    NULL);
+  svn_ra_serf__add_open_tag_buckets(
+    buckets, alloc, "S:get-locks-report", "xmlns:S", SVN_XML_NAMESPACE,
+    "depth", svn_depth_to_word(lock_ctx->requested_depth), NULL);
   svn_ra_serf__add_close_tag_buckets(buckets, alloc, "S:get-locks-report");
 
-  return buckets;
+  *body_bkt = buckets;
+  return SVN_NO_ERROR;
 }
 
 svn_error_t *
 svn_ra_serf__get_locks(svn_ra_session_t *ra_session,
                        apr_hash_t **locks,
                        const char *path,
+                       svn_depth_t depth,
                        apr_pool_t *pool)
 {
   lock_context_t *lock_ctx;
   svn_ra_serf__session_t *session = ra_session->priv;
   svn_ra_serf__handler_t *handler;
   svn_ra_serf__xml_parser_t *parser_ctx;
-  const char *req_url;
+  const char *req_url, *rel_path;
   int status_code;
+
+  req_url = svn_path_url_add_component2(session->session_url.path, path, pool);
+  SVN_ERR(svn_ra_serf__get_relative_path(&rel_path, req_url, session,
+                                         NULL, pool));
 
   lock_ctx = apr_pcalloc(pool, sizeof(*lock_ctx));
   lock_ctx->pool = pool;
+  lock_ctx->path = apr_pstrcat(pool, "/", rel_path, (char *)NULL);
+  lock_ctx->requested_depth = depth;
   lock_ctx->hash = apr_hash_make(pool);
   lock_ctx->done = FALSE;
-
-  req_url = svn_path_url_add_component(session->repos_url.path, path, pool);
 
   handler = apr_pcalloc(pool, sizeof(*handler));
 

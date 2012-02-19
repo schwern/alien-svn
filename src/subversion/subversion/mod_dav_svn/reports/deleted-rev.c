@@ -1,18 +1,24 @@
 /*
- * deleted-rev :  routine for getting the revision a path was deleted.
+ * deleted-rev.c: mod_dav_svn REPORT handler for getting the rev in
+ *                which a path was deleted
  *
  * ====================================================================
- * Copyright (c) 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -26,6 +32,7 @@
 #include "svn_dav.h"
 #include "svn_pools.h"
 
+#include "private/svn_fspath.h"
 #include "private/svn_dav_protocol.h"
 
 #include "../dav_svn.h"
@@ -38,9 +45,11 @@ dav_svn__get_deleted_rev_report(const dav_resource *resource,
 {
   apr_xml_elem *child;
   int ns;
-  const char *rel_path = NULL, *abs_path;
-  svn_revnum_t peg_rev = SVN_INVALID_REVNUM, end_rev = SVN_INVALID_REVNUM,
-      deleted_rev;
+  const char *rel_path = NULL;
+  const char *abs_path = NULL;
+  svn_revnum_t peg_rev = SVN_INVALID_REVNUM;
+  svn_revnum_t end_rev = SVN_INVALID_REVNUM;
+  svn_revnum_t deleted_rev;
   apr_bucket_brigade *bb;
   svn_error_t *err;
   apr_status_t apr_err;
@@ -77,11 +86,18 @@ dav_svn__get_deleted_rev_report(const dav_resource *resource,
           rel_path = dav_xml_get_cdata(child, resource->pool, 0);
           if ((derr = dav_svn__test_canonical(rel_path, resource->pool)))
             return derr;
+          /* Force REL_PATH to be a relative path, not an fspath. */
+          rel_path = svn_relpath_canonicalize(rel_path, resource->pool);
+
+          /* Append REL_PATH to the base FS path to get an absolute
+             repository path. */
+          abs_path = svn_fspath__join(resource->info->repos_path, rel_path,
+                                      resource->pool);
         }
     }
 
-    /* Check that all parameters are present. */
-  if (! (rel_path
+  /* Check that all parameters are present and valid. */
+  if (! (abs_path
          && SVN_IS_VALID_REVNUM(peg_rev)
          && SVN_IS_VALID_REVNUM(end_rev)))
     {
@@ -91,11 +107,6 @@ dav_svn__get_deleted_rev_report(const dav_resource *resource,
                                     SVN_DAV_ERROR_TAG);
     }
 
-  /* Append the relative path to the base FS path to get an absolute
-     repository path. */
-  abs_path = svn_path_join(resource->info->repos_path, rel_path,
-                           resource->pool);
-
   /* Do what we actually came here for: Find the rev abs_path was deleted. */
   err = svn_repos_deleted_rev(resource->info->repos->fs,
                               abs_path, peg_rev, end_rev,
@@ -103,8 +114,8 @@ dav_svn__get_deleted_rev_report(const dav_resource *resource,
   if (err)
     {
       svn_error_clear(err);
-      return dav_new_error(resource->pool, HTTP_INTERNAL_SERVER_ERROR, 0,
-                           "Could not find revision path was deleted.");
+      return dav_svn__new_error(resource->pool, HTTP_INTERNAL_SERVER_ERROR, 0,
+                                "Could not find revision path was deleted.");
     }
 
   bb = apr_brigade_create(resource->pool, output->c->bucket_alloc);

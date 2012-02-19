@@ -2,17 +2,22 @@
  * simple_providers.c: providers for SVN_AUTH_CRED_SIMPLE
  *
  * ====================================================================
- * Copyright (c) 2003-2006, 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -44,7 +49,7 @@
 #define AUTHN_PASSTYPE_KEY            "passtype"
 
 /* Baton type for the simple provider. */
-typedef struct
+typedef struct simple_provider_baton_t
 {
   svn_auth_plaintext_prompt_func_t plaintext_prompt_func;
   void *prompt_baton;
@@ -156,7 +161,6 @@ svn_auth__simple_first_creds_helper(void **credentials,
   apr_hash_t *creds_hash = NULL;
   svn_error_t *err;
   svn_string_t *str;
-  svn_boolean_t have_passtype = FALSE;
 
   /* Try to load credentials from a file on disk, based on the
      realmstring.  Don't throw an error, though: if something went
@@ -173,6 +177,8 @@ svn_auth__simple_first_creds_helper(void **credentials,
   else if (creds_hash)
     {
       /* We have something in the auth cache for this realm. */
+      svn_boolean_t have_passtype = FALSE;
+
       /* The password type in the auth data must match the
          mangler's type, otherwise the password must be
          interpreted by another provider. */
@@ -197,7 +203,7 @@ svn_auth__simple_first_creds_helper(void **credentials,
               else
                 need_to_save = TRUE;
             }
-	}
+        }
 
       /* See if we need to save this password if it is not present in
          auth cache. */
@@ -536,7 +542,7 @@ svn_auth_get_simple_provider2
 /*-----------------------------------------------------------------------*/
 
 /* Baton type for username/password prompting. */
-typedef struct
+typedef struct simple_prompt_provider_baton_t
 {
   svn_auth_simple_prompt_func_t prompt_func;
   void *prompt_baton;
@@ -547,7 +553,7 @@ typedef struct
 
 
 /* Iteration baton type for username/password prompting. */
-typedef struct
+typedef struct simple_prompt_iter_baton_t
 {
   /* how many times we've reprompted */
   int retries;

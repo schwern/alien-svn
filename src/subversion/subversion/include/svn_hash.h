@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2004, 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -242,7 +247,40 @@ svn_hash_from_cstring_keys(apr_hash_t **hash,
  * @since New in 1.5.
  */
 svn_error_t *
-svn_hash__clear(apr_hash_t *hash);
+svn_hash__clear(apr_hash_t *hash, apr_pool_t *pool);
+
+/** @} */
+
+
+/**
+ * @defgroup svn_hash_getters Specialized getter APIs for hashes
+ * @{
+ */
+
+/** Find the value of a @a key in @a hash, return the value.
+ *
+ * If @a hash is @c NULL or if the @a key cannot be found, the
+ * @a default_value will be returned.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_hash__get_cstring(apr_hash_t *hash,
+                      const char *key,
+                      const char *default_value);
+
+/** Like svn_hash_get_cstring(), but for boolean values.
+ *
+ * Parses the value as a boolean value. The recognized representations
+ * are 'TRUE'/'FALSE', 'yes'/'no', 'on'/'off', '1'/'0'; case does not
+ * matter.
+ *
+ * @since New in 1.7.
+ */
+svn_boolean_t
+svn_hash__get_bool(apr_hash_t *hash,
+                   const char *key,
+                   svn_boolean_t default_value);
 
 /** @} */
 

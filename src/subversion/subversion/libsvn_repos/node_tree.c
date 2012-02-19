@@ -2,17 +2,22 @@
  * node_tree.c:  an editor for tracking repository deltas changes
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -29,12 +34,14 @@
 
 #include "svn_types.h"
 #include "svn_error.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_delta.h"
 #include "svn_fs.h"
 #include "svn_repos.h"
 #include "repos.h"
 #include "svn_private_config.h"
+#include "private/svn_fspath.h"
 
 /*** NOTE: This editor is unique in that it currently is hard-coded to
      be anchored at the root directory of the filesystem.  This
@@ -155,7 +162,7 @@ find_real_base_location(const char **path_p,
       svn_revnum_t rev;
 
       find_real_base_location(&path, &rev, node->parent, pool);
-      *path_p = svn_path_join(path, node->name, pool);
+      *path_p = svn_fspath__join(path, node->name, pool);
       *rev_p = rev;
       return;
     }
@@ -206,7 +213,7 @@ delete_entry(const char *path,
   svn_node_kind_t kind;
 
   /* Get (or create) the change node and update it. */
-  name = svn_path_basename(path, pool);
+  name = svn_relpath_basename(path, pool);
   node = find_child_by_name(d->node, name);
   if (! node)
     node = create_child_node(d->node, name, eb->node_pool);
@@ -262,7 +269,7 @@ add_open_helper(const char *path,
   nb->parent_baton = pb;
 
   /* Create and populate the node. */
-  nb->node = create_child_node(pb->node, svn_path_basename(path, pool),
+  nb->node = create_child_node(pb->node, svn_relpath_basename(path, NULL),
                                eb->node_pool);
   nb->node->kind = kind;
   nb->node->action = action;

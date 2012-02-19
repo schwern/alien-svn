@@ -3,17 +3,25 @@
 #  resolved_tests.py:  testing "resolved" cases.
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -24,13 +32,15 @@ import svntest
 from svntest import wc
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-SkipUnless = svntest.testcase.SkipUnless
-XFail = svntest.testcase.XFail
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
 Item = svntest.wc.StateItem
 
-from svntest.main import SVN_PROP_MERGEINFO, server_sends_copyfrom_on_update, \
-  server_has_mergeinfo
+from svntest.main import SVN_PROP_MERGEINFO, server_has_mergeinfo
 
 ######################################################################
 # Tests
@@ -104,6 +114,8 @@ def resolved_on_wc_root(sbox):
                        'A/B/lambda',
                        'A/B/E/alpha', 'A/B/E/beta',
                        'A/D/gamma')
+  if svntest.main.wc_is_singledb(sbox.wc_dir):
+    expected_disk.remove('A/B/E', 'A/B/F', 'A/B')
 
   expected_status = svntest.actions.get_virginal_state(wc, 2)
   expected_status.tweak('iota', 'A/B', 'A/D/gamma',
@@ -266,7 +278,11 @@ def resolved_on_deleted_item(sbox):
       'B'                 : Item(status='  ', treeconflict='C'),
       'D/gamma'           : Item(status='  ', treeconflict='C'),
     })
-
+  expected_mergeinfo_output = svntest.wc.State(A2, {
+      '' : Item(status=' U')
+    })
+  expected_elision_output = svntest.wc.State(A2, {
+    })
   expected_disk = svntest.wc.State('', {
       'mu'                : Item(contents="This is the file 'mu'.\n"),
       'D'                 : Item(),
@@ -302,11 +318,12 @@ def resolved_on_deleted_item(sbox):
     'C'                 : Item(status='  ', wc_rev='2'),
   })
 
-  svntest.actions.run_and_verify_merge(
-                       A2, None, None, A_url,
-                       expected_output, expected_disk, None, expected_skip,
-                       None,
-                       dry_run = False)
+  svntest.actions.run_and_verify_merge(A2, None, None, A_url, None,
+                                       expected_output,
+                                       expected_mergeinfo_output,
+                                       expected_elision_output,
+                                       expected_disk, None, expected_skip,
+                                       None, dry_run = False)
   svntest.actions.run_and_verify_unquiet_status(A2, expected_status)
 
 

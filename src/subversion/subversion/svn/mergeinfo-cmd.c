@@ -2,17 +2,22 @@
  * mergeinfo-cmd.c -- Query merge-relative info.
  *
  * ====================================================================
- * Copyright (c) 2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -36,17 +41,19 @@
 
 /*** Code. ***/
 
-/* Implements the svn_log_entry_receiver_t interface.  BATON is a
-   pointer to a mergeinfo rangelist array. */
+/* Implements the svn_log_entry_receiver_t interface. */
 static svn_error_t *
 print_log_rev(void *baton,
               svn_log_entry_t *log_entry,
               apr_pool_t *pool)
 {
-  svn_cmdline_printf(pool, "r%ld\n", log_entry->revision);
+  if (log_entry->non_inheritable)
+    SVN_ERR(svn_cmdline_printf(pool, "r%ld*\n", log_entry->revision));
+  else
+    SVN_ERR(svn_cmdline_printf(pool, "r%ld\n", log_entry->revision));
+
   return SVN_NO_ERROR;
 }
-
 
 /* This implements the `svn_opt_subcommand_t' interface. */
 svn_error_t *
@@ -59,10 +66,13 @@ svn_cl__mergeinfo(apr_getopt_t *os,
   apr_array_header_t *targets;
   const char *source, *target;
   svn_opt_revision_t src_peg_revision, tgt_peg_revision;
+  /* Default to depth empty. */
+  svn_depth_t depth = opt_state->depth == svn_depth_unknown
+    ? svn_depth_empty : opt_state->depth;
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
                                                       opt_state->targets,
-                                                      ctx, pool));
+                                                      ctx, FALSE, pool));
 
   /* We expect a single source URL followed by a single target --
      nothing more, nothing less. */
@@ -107,17 +117,19 @@ svn_cl__mergeinfo(apr_getopt_t *os,
   /* Do the real work, depending on the requested data flavor. */
   if (opt_state->show_revs == svn_cl__show_revs_merged)
     {
-      SVN_ERR(svn_client_mergeinfo_log_merged(target, &tgt_peg_revision,
-                                              source, &src_peg_revision,
-                                              print_log_rev, NULL,
-                                              FALSE, NULL, ctx, pool));
+      SVN_ERR(svn_client_mergeinfo_log(TRUE, target, &tgt_peg_revision,
+                                       source, &src_peg_revision,
+                                       print_log_rev, NULL,
+                                       TRUE, depth, NULL, ctx,
+                                       pool));
     }
   else if (opt_state->show_revs == svn_cl__show_revs_eligible)
     {
-      SVN_ERR(svn_client_mergeinfo_log_eligible(target, &tgt_peg_revision,
-                                                source, &src_peg_revision,
-                                                print_log_rev, NULL,
-                                                FALSE, NULL, ctx, pool));
+      SVN_ERR(svn_client_mergeinfo_log(FALSE, target, &tgt_peg_revision,
+                                       source, &src_peg_revision,
+                                       print_log_rev, NULL,
+                                       TRUE, depth, NULL, ctx,
+                                       pool));
     }
   return SVN_NO_ERROR;
 }

@@ -2,17 +2,22 @@
  * export-cmd.c -- Subversion export command
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -24,10 +29,12 @@
 
 #include "svn_client.h"
 #include "svn_error.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "cl.h"
 
 #include "svn_private_config.h"
+#include "private/svn_opt_private.h"
 
 
 /*** Code. ***/
@@ -45,10 +52,11 @@ svn_cl__export(apr_getopt_t *os,
   svn_error_t *err;
   svn_opt_revision_t peg_revision;
   const char *truefrom;
+  struct svn_cl__check_externals_failed_notify_baton nwb;
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
                                                       opt_state->targets,
-                                                      ctx, pool));
+                                                      ctx, FALSE, pool));
 
   /* We want exactly 1 or 2 targets for this subcommand. */
   if (targets->nelts < 1)
@@ -65,28 +73,50 @@ svn_cl__export(apr_getopt_t *os,
   /* If only one target was given, split off the basename to use as
      the `to' path.  Else, a `to' path was supplied. */
   if (targets->nelts == 1)
-    to = svn_path_uri_decode(svn_path_basename(truefrom, pool), pool);
+    {
+      if (svn_path_is_url(truefrom))
+        to = svn_uri_basename(truefrom, pool);
+      else
+        to = svn_dirent_basename(truefrom, pool);
+    }
   else
-    to = APR_ARRAY_IDX(targets, 1, const char *);
+    {
+      to = APR_ARRAY_IDX(targets, 1, const char *);
+
+      if (strcmp("", to) != 0)
+        /* svn_cl__eat_peg_revisions() but only on one target */
+        SVN_ERR(svn_opt__split_arg_at_peg_revision(&to, NULL, to, pool));
+    }
+
+  SVN_ERR(svn_cl__check_target_is_local_path(to));
 
   if (! opt_state->quiet)
-    svn_cl__get_notifier(&ctx->notify_func2, &ctx->notify_baton2, FALSE, TRUE,
-                         FALSE, pool);
+    SVN_ERR(svn_cl__notifier_mark_export(ctx->notify_baton2));
 
   if (opt_state->depth == svn_depth_unknown)
     opt_state->depth = svn_depth_infinity;
 
+  nwb.wrapped_func = ctx->notify_func2;
+  nwb.wrapped_baton = ctx->notify_baton2;
+  nwb.had_externals_error = FALSE;
+  ctx->notify_func2 = svn_cl__check_externals_failed_notify_wrapper;
+  ctx->notify_baton2 = &nwb;
+
   /* Do the export. */
-  err = svn_client_export4(NULL, truefrom, to, &peg_revision,
+  err = svn_client_export5(NULL, truefrom, to, &peg_revision,
                            &(opt_state->start_revision),
                            opt_state->force, opt_state->ignore_externals,
-                           opt_state->depth,
-                           opt_state->native_eol, ctx,
-                           pool);
+                           opt_state->ignore_keywords, opt_state->depth,
+                           opt_state->native_eol, ctx, pool);
   if (err && err->apr_err == SVN_ERR_WC_OBSTRUCTED_UPDATE && !opt_state->force)
     SVN_ERR_W(err,
               _("Destination directory exists; please remove "
                 "the directory or use --force to overwrite"));
 
-  return err;
+  if (nwb.had_externals_error)
+    return svn_error_create(SVN_ERR_CL_ERROR_PROCESSING_EXTERNALS, NULL,
+                            _("Failure occurred processing one or more "
+                              "externals definitions"));
+
+  return svn_error_trace(err);
 }

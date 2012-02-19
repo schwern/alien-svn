@@ -2,17 +2,22 @@
  * kwallet.cpp: KWallet provider for SVN_AUTH_CRED_*
  *
  * ====================================================================
- * Copyright (c) 2008-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -22,6 +27,7 @@
 
 /*** Includes. ***/
 
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -30,6 +36,9 @@
 #include "svn_auth.h"
 #include "svn_config.h"
 #include "svn_error.h"
+#include "svn_io.h"
+#include "svn_pools.h"
+#include "svn_string.h"
 #include "svn_version.h"
 
 #include "private/svn_auth_private.h"
@@ -69,8 +78,7 @@ get_application_name(apr_hash_t *parameters,
   const char *svn_application_name;
   if (svn_application_name_with_pid)
     {
-      long pid = getpid();
-      svn_application_name = apr_psprintf(pool, "Subversion [%ld]", pid);
+      svn_application_name = apr_psprintf(pool, "Subversion [%ld]", long(getpid()));
     }
   else
     {
@@ -102,6 +110,27 @@ get_wallet_name(apr_hash_t *parameters)
     }
 }
 
+static WId
+get_wid(void)
+{
+  WId wid = 1;
+  const char *wid_env_string = getenv("WINDOWID");
+
+  if (wid_env_string)
+    {
+      apr_int64_t wid_env;
+      svn_error_t *err;
+
+      err = svn_cstring_atoi64(&wid_env, wid_env_string);
+      if (err)
+        svn_error_clear(err);
+      else
+        wid = (WId)wid_env;
+    }
+
+  return wid;
+}
+
 static KWallet::Wallet *
 get_wallet(QString wallet_name,
            apr_hash_t *parameters)
@@ -114,8 +143,7 @@ get_wallet(QString wallet_name,
                                  "kwallet-opening-failed",
                                  APR_HASH_KEY_STRING))
     {
-      wallet = KWallet::Wallet::openWallet(wallet_name,
-                                           -1,
+      wallet = KWallet::Wallet::openWallet(wallet_name, get_wid(),
                                            KWallet::Wallet::Synchronous);
     }
   if (wallet)
@@ -399,6 +427,7 @@ static const svn_auth_provider_t kwallet_ssl_client_cert_pw_provider = {
 };
 
 /* Public API */
+extern "C" {
 void
 svn_auth_get_kwallet_ssl_client_cert_pw_provider
     (svn_auth_provider_object_t **provider,
@@ -409,4 +438,5 @@ svn_auth_get_kwallet_ssl_client_cert_pw_provider
 
   po->vtable = &kwallet_ssl_client_cert_pw_provider;
   *provider = po;
+}
 }

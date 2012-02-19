@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2007-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -24,6 +29,10 @@
 
 #include <jni.h>
 #include "svn_wc.h"
+#include "svn_repos.h"
+#include "svn_client.h"
+
+#include <vector>
 
 /**
  * This class passes centralizes the creating of Java objects from
@@ -34,24 +43,56 @@ class CreateJ
 {
  public:
   static jobject
-  ConflictDescriptor(const svn_wc_conflict_description_t *desc);
+  ConflictDescriptor(const svn_wc_conflict_description2_t *desc);
 
   static jobject
-  Info(const svn_wc_entry_t *entry);
+  Checksum(const svn_checksum_t *checksum);
+
+  static jobject
+  Info(const char *path, const svn_client_info2_t *info);
 
   static jobject
   Lock(const svn_lock_t *lock);
 
   static jobject
-  Property(jobject jthis, const char *path, const char *name,
-           svn_string_t *value);
+  ChangedPath(const char *path, svn_log_changed_path2_t *log_item);
 
-  static jobjectArray
-  RevisionRangeArray(apr_array_header_t *ranges);
+  static jobject
+  Status(svn_wc_context_t *wc_ctx, const svn_client_status_t *status,
+         apr_pool_t *pool);
+
+  static jobject
+  ClientNotifyInformation(const svn_wc_notify_t *notify);
+
+  static jobject
+  ReposNotifyInformation(const svn_repos_notify_t *notify);
+
+  static jobject
+  CommitItem(svn_client_commit_item3_t *item);
+
+  static jobject
+  CommitInfo(const svn_commit_info_t *info);
+
+  static jobject
+  RevisionRangeList(apr_array_header_t *ranges);
+
+  static jobject
+  StringSet(apr_array_header_t *strings);
+
+  static jobject
+  PropertyMap(apr_hash_t *prop_hash);
+
+  /* This creates a set of Objects.  It derefs the members of the vector
+   * after putting them in the set, so they caller doesn't need to. */
+  static jobject
+  Set(std::vector<jobject> &objects);
 
  protected:
   static jobject
   ConflictVersion(const svn_wc_conflict_version_t *version);
+
+  static jobject
+  Collection(std::vector<jobject> &object, const char *className);
 };
 
 #endif  // CREATEJ_H

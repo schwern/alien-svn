@@ -1,47 +1,127 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
  * @file svn_dirent_uri.h
- * @brief A library to manipulate URIs and directory entries.
+ * @brief A library to manipulate URIs, relative paths and directory entries.
  *
- * This library makes a clear distinction between directory entries (dirents)
- * and URIs where:
- *  - a dirent is a path on (local) disc or a UNC path (Windows)
- *    examples: "/foo/bar", "X:/temp", "//server/share"
- *  - a URI is a path in a repository or a URL
- *    examples: "/trunk/README", "http://hostname/svn/repos"
+ * This library makes a clear distinction between several path formats:
+ *
+ *  - a dirent is a path on (local) disc or a UNC path (Windows) in
+ *    either relative or absolute format.
+ *    Examples:
+ *       "/foo/bar", "X:/temp", "//server/share", "A:/" (Windows only)
+ *    But not:
+ *       "http://server"
+ *
+ * - a uri, for our purposes, is a percent-encoded, absolute path
+ *    (URI) that starts with a schema definition.  In practice, these
+ *    tend to look like URLs, but never carry query strings.
+ *    Examples:
+ *       "http://server", "file:///path/to/repos",
+ *       "svn+ssh://user@host:123/My%20Stuff/file.doc"
+ *    But not:
+ *       "file", "dir/file", "A:/dir", "/My%20Stuff/file.doc"
+ *
+ *  - a relative path (relpath) is an unrooted path that can be joined
+ *    to any other relative path, uri or dirent. A relative path is
+ *    never rooted/prefixed by a '/'.
+ *    Examples:
+ *       "file", "dir/file", "dir/subdir/../file"
+ *    But not:
+ *       "/file", "http://server/file"
  *
  * This distinction is needed because on Windows we have to handle some
  * dirents and URIs differently. Since it's not possible to determine from
  * the path string if it's a dirent or a URI, it's up to the API user to
  * make this choice. See also issue #2028.
  *
- * Nearly all the @c svn_dirent_xxx functions expect paths passed into them
- * to be in canonical form.  The only functions which do *not* have such 
- * expectations are:
+ * All of these functions expect paths passed into them to be in canonical
+ * form, except:
  *
  *    - @c svn_dirent_canonicalize()
  *    - @c svn_dirent_is_canonical()
  *    - @c svn_dirent_internal_style()
- *    - @c svn_dirent_local_style()
+ *    - @c svn_relpath_canonicalize()
+ *    - @c svn_relpath_is_canonical()
+ *    - @c svn_relpath__internal_style()
+ *    - @c svn_uri_canonicalize()
+ *    - @c svn_uri_is_canonical()
  *
- * ### TODO: add description in line with svn_path.h, once more functions
- * are moved.
- * ### END TODO
+ * The Subversion codebase also recognizes some other classes of path:
+ *
+ *  - A Subversion filesystem path (fspath) -- otherwise known as a
+ *    path within a repository -- is a path relative to the root of
+ *    the repository filesystem, that starts with a slash ("/").  The
+ *    rules for a fspath are the same as for a relpath except for the
+ *    leading '/'.  A fspath never ends with '/' except when the whole
+ *    path is just '/'.  The fspath API is private (see
+ *    private/svn_fspath.h).
+ *
+ *  - A URL path (urlpath) is just the path part of a URL (the part
+ *    that follows the schema, username, hostname, and port).  These
+ *    are also like relpaths, except that they have a leading slash
+ *    (like fspaths) and are URI-encoded.  The urlpath API is also
+ *    private (see private/svn_fspath.h)
+ *    Example:
+ *       "/svn/repos/trunk/README",
+ *       "/svn/repos/!svn/bc/45/file%20with%20spaces.txt"
+ *
+ * So, which path API is appropriate for your use-case?
+ *
+ *  - If your path refers to a local file, directory, symlink, etc. of
+ *    the sort that you can examine and operate on with other software
+ *    on your computer, it's a dirent.
+ *
+ *  - If your path is a full URL -- with a schema, hostname (maybe),
+ *    and path portion -- it's a uri.
+ *
+ *  - If your path is relative, and is somewhat ambiguous unless it's
+ *    joined to some other more explicit (possible absolute) base
+ *    (such as a dirent or URL), it's a relpath.
+ *
+ *  - If your path is the virtual path of a versioned object inside a
+ *    Subversion repository, it could be one of two different types of
+ *    paths.  We'd prefer to use relpaths (relative to the root
+ *    directory of the virtual repository filesystem) for that stuff,
+ *    but some legacy code uses fspaths.  You'll need to figure out if
+ *    your code expects repository paths to have a leading '/' or not.
+ *    If so, they are fspaths; otherwise they are relpaths.
+ *
+ *  - If your path refers only to the path part of URL -- as if
+ *    someone hacked off the initial schema and hostname portion --
+ *    it's a urlpath.  To date, the ra_dav modules are the only ones
+ *    within Subversion that make use of urlpaths, and this is because
+ *    WebDAV makes heavy use of that form of path specification.
+ *
+ * When translating between local paths (dirents) and uris code should
+ * always go via the relative path format, perhaps by truncating a
+ * parent portion from a path with svn_*_skip_ancestor(), or by
+ * converting portions to basenames and then joining to existing
+ * paths.
+ *
+ * SECURITY WARNING: If a path that is received from an untrusted
+ * source -- such as from the network -- is converted to a dirent it
+ * should be tested with svn_dirent_is_under_root() before you can
+ * assume the path to be a safe local path.
  */
 
 #ifndef SVN_DIRENT_URI_H
@@ -59,6 +139,7 @@ extern "C" {
 
 
 /** Convert @a dirent from the local style to the canonical internal style.
+ * "Local style" means native path separators and "." for the empty path.
  *
  * @since New in 1.6.
  */
@@ -66,13 +147,25 @@ const char *
 svn_dirent_internal_style(const char *dirent,
                           apr_pool_t *pool);
 
-/** Convert @a dirent from the canonical internal style to the local style.
+/** Convert @a dirent from the internal style to the local style.
+ * "Local style" means native path separators and "." for the empty path.
+ * If the input is not canonical, the output may not be canonical.
  *
  * @since New in 1.6.
  */
 const char *
 svn_dirent_local_style(const char *dirent,
                        apr_pool_t *pool);
+
+/** Convert @a relpath from the local style to the canonical internal style.
+ * "Local style" means native path separators and "." for the empty path.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_relpath__internal_style(const char *relpath,
+                            apr_pool_t *pool);
+
 
 /** Join a base dirent (@a base) with a component (@a component), allocated in
  * @a pool.
@@ -112,10 +205,41 @@ svn_dirent_join_many(apr_pool_t *pool,
                      const char *base,
                      ...);
 
+/** Join a base relpath (@a base) with a component (@a component), allocating
+ * the result in @a pool. @a component need not be a single component.
+ *
+ * If either @a base or @a component is the empty path, then the other
+ * argument will be copied and returned.  If both are the empty path the
+ * empty path is returned.
+ *
+ * @since New in 1.7.
+ */
+char *
+svn_relpath_join(const char *base,
+                 const char *component,
+                 apr_pool_t *pool);
+
+/** Gets the name of the specified canonicalized @a dirent as it is known
+ * within its parent directory. If the @a dirent is root, return "". The
+ * returned value will not have slashes in it.
+ *
+ * Example: svn_dirent_basename("/foo/bar") -> "bar"
+ *
+ * The returned basename will be allocated in @a pool. If @a pool is NULL
+ * a pointer to the basename in @a dirent is returned.
+ *
+ * @note If an empty string is passed, then an empty string will be returned.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_dirent_basename(const char *dirent,
+                    apr_pool_t *pool);
+
 /** Get the dirname of the specified canonicalized @a dirent, defined as
  * the dirent with its basename removed.
  *
- * If @a dirent is root  ("/", "X:/", "//server/share/"), it is returned
+ * If @a dirent is root  ("/", "X:/", "//server/share/") or "", it is returned
  * unchanged.
  *
  * The returned dirname will be allocated in @a pool.
@@ -126,8 +250,145 @@ char *
 svn_dirent_dirname(const char *dirent,
                    apr_pool_t *pool);
 
+/** Divide the canonicalized @a dirent into @a *dirpath and @a
+ * *base_name, allocated in @a pool.
+ *
+ * If @a dirpath or @a base_name is NULL, then don't set that one.
+ *
+ * Either @a dirpath or @a base_name may be @a dirent's own address, but they
+ * may not both be the same address, or the results are undefined.
+ *
+ * If @a dirent has two or more components, the separator between @a dirpath
+ * and @a base_name is not included in either of the new names.
+ *
+ * Examples:
+ *             - <pre>"/foo/bar/baz"  ==>  "/foo/bar" and "baz"</pre>
+ *             - <pre>"/bar"          ==>  "/"  and "bar"</pre>
+ *             - <pre>"/"             ==>  "/"  and ""</pre>
+ *             - <pre>"bar"           ==>  ""   and "bar"</pre>
+ *             - <pre>""              ==>  ""   and ""</pre>
+ *  Windows:   - <pre>"X:/"           ==>  "X:/" and ""</pre>
+ *             - <pre>"X:/foo"        ==>  "X:/" and "foo"</pre>
+ *             - <pre>"X:foo"         ==>  "X:" and "foo"</pre>
+ *  Posix:     - <pre>"X:foo"         ==>  ""   and "X:foo"</pre>
+ *
+ * @since New in 1.7.
+ */
+void
+svn_dirent_split(const char **dirpath,
+                 const char **base_name,
+                 const char *dirent,
+                 apr_pool_t *pool);
+
+/** Divide the canonicalized @a relpath into @a *dirpath and @a
+ * *base_name, allocated in @a pool.
+ *
+ * If @a dirpath or @a base_name is NULL, then don't set that one.
+ *
+ * Either @a dirpath or @a base_name may be @a relpaths's own address, but
+ * they may not both be the same address, or the results are undefined.
+ *
+ * If @a relpath has two or more components, the separator between @a dirpath
+ * and @a base_name is not included in either of the new names.
+ *
+ *   examples:
+ *             - <pre>"foo/bar/baz"  ==>  "foo/bar" and "baz"</pre>
+ *             - <pre>"bar"          ==>  ""  and "bar"</pre>
+ *             - <pre>""              ==>  ""   and ""</pre>
+ *
+ * @since New in 1.7.
+ */
+void
+svn_relpath_split(const char **dirpath,
+                  const char **base_name,
+                  const char *relpath,
+                  apr_pool_t *pool);
+
+/** Get the basename of the specified canonicalized @a relpath.  The
+ * basename is defined as the last component of the relpath.  If the @a
+ * relpath has only one component then that is returned. The returned
+ * value will have no slashes in it.
+ *
+ * Example: svn_relpath_basename("/trunk/foo/bar") -> "bar"
+ *
+ * The returned basename will be allocated in @a pool. If @a
+ * pool is NULL a pointer to the basename in @a relpath is returned.
+ *
+ * @note If an empty string is passed, then an empty string will be returned.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_relpath_basename(const char *relpath,
+                     apr_pool_t *pool);
+
+/** Get the dirname of the specified canonicalized @a relpath, defined as
+ * the relpath with its basename removed.
+ *
+ * If @a relpath is empty, "" is returned.
+ *
+ * The returned relpath will be allocated in @a pool.
+ *
+ * @since New in 1.7.
+ */
+char *
+svn_relpath_dirname(const char *relpath,
+                    apr_pool_t *pool);
+
+
+/** Divide the canonicalized @a uri into a uri @a *dirpath and a
+ * (URI-decoded) relpath @a *base_name, allocated in @a pool.
+ *
+ * If @a dirpath or @a base_name is NULL, then don't set that one.
+ *
+ * Either @a dirpath or @a base_name may be @a uri's own address, but they
+ * may not both be the same address, or the results are undefined.
+ *
+ * If @a uri has two or more components, the separator between @a dirpath
+ * and @a base_name is not included in either of the new names.
+ *
+ * Examples:
+ *   - <pre>"http://server/foo/bar"  ==>  "http://server/foo" and "bar"</pre>
+ *
+ * @since New in 1.7.
+ */
+void
+svn_uri_split(const char **dirpath,
+              const char **base_name,
+              const char *uri,
+              apr_pool_t *pool);
+
+/** Get the (URI-decoded) basename of the specified canonicalized @a
+ * uri.  The basename is defined as the last component of the uri.  If
+ * the @a uri is root then that is returned.  Otherwise, the returned
+ * value will have no slashes in it.
+ *
+ * Example: svn_uri_basename("http://server/foo/bar") -> "bar"
+ *
+ * The returned basename will be allocated in @a pool.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_uri_basename(const char *uri,
+                 apr_pool_t *pool);
+
+/** Get the dirname of the specified canonicalized @a uri, defined as
+ * the uri with its basename removed.
+ *
+ * If @a uri is root (e.g. "http://server"), it is returned
+ * unchanged.
+ *
+ * The returned dirname will be allocated in @a pool.
+ *
+ * @since New in 1.7.
+ */
+char *
+svn_uri_dirname(const char *uri,
+                apr_pool_t *pool);
+
 /** Return TRUE if @a dirent is considered absolute on the platform at
- * hand. E.g. '/foo' on posix or 'X:/foo', '//server/share/foo' 
+ * hand. E.g. '/foo' on Posix platforms or 'X:/foo', '//server/share/foo'
  * on Windows.
  *
  * @since New in 1.6.
@@ -136,8 +397,13 @@ svn_boolean_t
 svn_dirent_is_absolute(const char *dirent);
 
 /** Return TRUE if @a dirent is considered a root directory on the platform
- * at hand. E.g. '/' on posix platforms or 'X:/', '//server/share'
- * on Windows.
+ * at hand.
+ * E.g.:
+ *  On Posix:   '/'
+ *  On Windows: '/', 'X:/', '//server/share', 'X:'
+ *
+ * Note that on Windows '/' and 'X:' are roots, but paths starting with this
+ * root are not absolute.
  *
  * @since New in 1.5.
  */
@@ -145,24 +411,76 @@ svn_boolean_t
 svn_dirent_is_root(const char *dirent,
                    apr_size_t len);
 
+/** Return TRUE if @a uri is a root URL (e.g., "http://server").
+ *
+ * @since New in 1.7
+ */
+svn_boolean_t
+svn_uri_is_root(const char *uri,
+                apr_size_t len);
+
 /** Return a new dirent like @a dirent, but transformed such that some types
  * of dirent specification redundancies are removed.
  *
- * This involves collapsing redundant "/./" elements, removing
- * multiple adjacent separator characters, removing trailing
- * separator characters, and possibly other semantically inoperative
- * transformations.
+ * This involves:
+ *   - collapsing redundant "/./" elements
+ *   - removing multiple adjacent separator characters
+ *   - removing trailing separator characters
+ *   - converting the server name of a UNC path to lower case (on Windows)
+ *   - converting a drive letter to upper case (on Windows)
  *
- * Convert the server name of UNC paths lowercase on Windows.
+ * and possibly other semantically inoperative transformations.
  *
- * The returned dirent may be statically allocated, equal to @a dirent, or
- * allocated from @a pool.
+ * The returned dirent may be allocated statically or from @a pool.
  *
  * @since New in 1.6.
  */
 const char *
 svn_dirent_canonicalize(const char *dirent,
                         apr_pool_t *pool);
+
+
+/** Return a new relpath like @a relpath, but transformed such that some types
+ * of relpath specification redundancies are removed.
+ *
+ * This involves:
+ *   - collapsing redundant "/./" elements
+ *   - removing multiple adjacent separator characters
+ *   - removing trailing separator characters
+ *
+ * and possibly other semantically inoperative transformations.
+ *
+ * The returned relpath may be allocated statically or from @a pool.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_relpath_canonicalize(const char *relpath,
+                         apr_pool_t *pool);
+
+
+/** Return a new uri like @a uri, but transformed such that some types
+ * of uri specification redundancies are removed.
+ *
+ * This involves:
+ *   - collapsing redundant "/./" elements
+ *   - removing multiple adjacent separator characters
+ *   - removing trailing separator characters
+ *   - normalizing the escaping of the path component by unescaping
+ *     characters that don't need escaping and escaping characters that do
+ *     need escaping but weren't
+ *   - removing the port number if it is the default port number (80 for
+ *     http, 443 for https, 3690 for svn)
+ *
+ * and possibly other semantically inoperative transformations.
+ *
+ * The returned uri may be allocated statically or from @a pool.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_uri_canonicalize(const char *uri,
+                     apr_pool_t *pool);
 
 /** Return @c TRUE iff @a dirent is canonical.  Use @a pool for temporary
  * allocations.
@@ -171,11 +489,30 @@ svn_dirent_canonicalize(const char *dirent,
  * "looks exactly the same as @c svn_dirent_canonicalize() would make
  * it look".
  *
+ * @see svn_dirent_canonicalize()
  * @since New in 1.6.
  */
 svn_boolean_t
 svn_dirent_is_canonical(const char *dirent,
                         apr_pool_t *pool);
+
+/** Return @c TRUE iff @a relpath is canonical.
+ *
+ * @see svn_relpath_canonicalize()
+ * @since New in 1.7.
+ */
+svn_boolean_t
+svn_relpath_is_canonical(const char *relpath);
+
+/** Return @c TRUE iff @a uri is canonical.  Use @a pool for temporary
+ * allocations.
+ *
+ * @see svn_uri_canonicalize()
+ * @since New in 1.7.
+ */
+svn_boolean_t
+svn_uri_is_canonical(const char *uri,
+                     apr_pool_t *pool);
 
 /** Return the longest common dirent shared by two canonicalized dirents,
  * @a dirent1 and @a dirent2.  If there's no common ancestor, return the
@@ -188,8 +525,35 @@ svn_dirent_get_longest_ancestor(const char *dirent1,
                                 const char *dirent2,
                                 apr_pool_t *pool);
 
+/** Return the longest common path shared by two relative paths,
+ * @a relpath1 and @a relpath2.  If there's no common ancestor, return the
+ * empty path.
+ *
+ * @since New in 1.7.
+ */
+char *
+svn_relpath_get_longest_ancestor(const char *relpath1,
+                                 const char *relpath2,
+                                 apr_pool_t *pool);
+
+/** Return the longest common path shared by two canonicalized uris,
+ * @a uri1 and @a uri2.  If there's no common ancestor, return the
+ * empty path.  In order for two URLs to have a common ancestor, they
+ * must (a) have the same protocol (since two URLs with the same path
+ * but different protocols may point at completely different
+ * resources), and (b) share a common ancestor in their path
+ * component, i.e. 'protocol://' is not a sufficient ancestor.
+ *
+ * @since New in 1.7.
+ */
+char *
+svn_uri_get_longest_ancestor(const char *uri1,
+                             const char *uri2,
+                             apr_pool_t *pool);
+
 /** Convert @a relative canonicalized dirent to an absolute dirent and
  * return the results in @a *pabsolute, allocated in @a pool.
+ * Raise SVN_ERR_BAD_FILENAME if the absolute dirent cannot be determined.
  *
  * @since New in 1.6.
  */
@@ -198,25 +562,225 @@ svn_dirent_get_absolute(const char **pabsolute,
                         const char *relative,
                         apr_pool_t *pool);
 
-/**
- * This function is similar as @c svn_path_is_child, except that it supports
- * Windows dirents and UNC paths on Windows.
+/** Similar to svn_uri_skip_ancestor(), except that if @a child_uri is
+ * the same as @a parent_uri, it is not considered a child, so the result
+ * is @c NULL; an empty string is never returned.
+ */
+const char *
+svn_uri__is_child(const char *parent_uri,
+                  const char *child_uri,
+                  apr_pool_t *pool);
+
+/** Similar to svn_dirent_skip_ancestor(), except that if @a child_dirent is
+ * the same as @a parent_dirent, it is not considered a child, so the result
+ * is @c NULL; an empty string is never returned.
+ *
+ * ### TODO: Deprecate, as the semantics are trivially
+ * obtainable from *_skip_ancestor().
  *
  * @since New in 1.6.
  */
 const char *
-svn_dirent_is_child(const char *dirent1,
-                    const char *dirent2,
+svn_dirent_is_child(const char *parent_dirent,
+                    const char *child_dirent,
                     apr_pool_t *pool);
 
-/** Return TRUE if @a dirent1 is an ancestor of @a dirent2 or the dirents are
- * equal and FALSE otherwise.
+/** Similar to svn_relpath_skip_ancestor(), except that if @a child_relpath is
+ * the same as @a parent_relpath, it is not considered a child, so the result
+ * is @c NULL; an empty string is never returned.
+ */
+const char *
+svn_relpath__is_child(const char *parent_relpath,
+                      const char *child_relpath,
+                      apr_pool_t *pool);
+
+/** Return TRUE if @a parent_dirent is an ancestor of @a child_dirent or
+ * the dirents are equal, and FALSE otherwise.
+ *
+ * ### TODO: Deprecate, as the semantics are trivially
+ * obtainable from *_skip_ancestor().
  *
  * @since New in 1.6.
  */
 svn_boolean_t
-svn_dirent_is_ancestor(const char *path1,
-                       const char *path2);
+svn_dirent_is_ancestor(const char *parent_dirent,
+                       const char *child_dirent);
+
+/** Return TRUE if @a parent_relpath is an ancestor of @a child_relpath or
+ * the relpaths are equal, and FALSE otherwise.
+ */
+svn_boolean_t
+svn_relpath__is_ancestor(const char *parent_relpath,
+                         const char *child_relpath);
+
+/** Return TRUE if @a parent_uri is an ancestor of @a child_uri or
+ * the uris are equal, and FALSE otherwise.
+ */
+svn_boolean_t
+svn_uri__is_ancestor(const char *parent_uri,
+                     const char *child_uri);
+
+
+/** Return the relative path part of @a child_dirent that is below
+ * @a parent_dirent, or just "" if @a parent_dirent is equal to
+ * @a child_dirent. If @a child_dirent is not below or equal to
+ * @a parent_dirent, return NULL.
+ *
+ * If one of @a parent_dirent and @a child_dirent is absolute and
+ * the other relative, return NULL.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_dirent_skip_ancestor(const char *parent_dirent,
+                         const char *child_dirent);
+
+/** Return the relative path part of @a child_relpath that is below
+ * @a parent_relpath, or just "" if @a parent_relpath is equal to
+ * @a child_relpath. If @a child_relpath is not below or equal to
+ * @a parent_relpath, return NULL.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_relpath_skip_ancestor(const char *parent_relpath,
+                          const char *child_relpath);
+
+/** Return the URI-decoded relative path of @a child_uri that is below
+ * @a parent_uri, or just "" if @a parent_uri is equal to @a child_uri. If
+ * @a child_uri is not below or equal to @a parent_uri, return NULL.
+ * Allocate the result in @a result_pool.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_uri_skip_ancestor(const char *parent_uri,
+                      const char *child_uri,
+                      apr_pool_t *result_pool);
+
+/** Find the common prefix of the canonicalized dirents in @a targets
+ * (an array of <tt>const char *</tt>'s), and remove redundant dirents if @a
+ * remove_redundancies is TRUE.
+ *
+ *   - Set @a *pcommon to the absolute dirent of the dirent common to
+ *     all of the targets.  If the targets have no common prefix (e.g.
+ *     "C:/file" and "D:/file" on Windows), set @a *pcommon to the empty
+ *     string.
+ *
+ *   - If @a pcondensed_targets is non-NULL, set @a *pcondensed_targets
+ *     to an array of targets relative to @a *pcommon, and if
+ *     @a remove_redundancies is TRUE, omit any dirents that are
+ *     descendants of another dirent in @a targets.  If *pcommon
+ *     is empty, @a *pcondensed_targets will contain absolute dirents;
+ *     redundancies can still be removed.  If @a pcondensed_targets is NULL,
+ *     leave it alone.
+ *
+ * Else if there is exactly one target, then
+ *
+ *   - Set @a *pcommon to that target, and
+ *
+ *   - If @a pcondensed_targets is non-NULL, set @a *pcondensed_targets
+ *     to an array containing zero elements.  Else if
+ *     @a pcondensed_targets is NULL, leave it alone.
+ *
+ * If there are no items in @a targets, set @a *pcommon and (if
+ * applicable) @a *pcondensed_targets to @c NULL.
+ *
+ * Allocates @a *pcommon and @a *targets in @a result_pool. All
+ * intermediate allocations will be performed in @a scratch_pool.
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_dirent_condense_targets(const char **pcommon,
+                            apr_array_header_t **pcondensed_targets,
+                            const apr_array_header_t *targets,
+                            svn_boolean_t remove_redundancies,
+                            apr_pool_t *result_pool,
+                            apr_pool_t *scratch_pool);
+
+/** Find the common prefix of the canonicalized uris in @a targets
+ * (an array of <tt>const char *</tt>'s), and remove redundant uris if @a
+ * remove_redundancies is TRUE.
+ *
+ *   - Set @a *pcommon to the common base uri of all of the targets.
+ *     If the targets have no common prefix (e.g. "http://srv1/file"
+ *     and "http://srv2/file"), set @a *pcommon to the empty
+ *     string.
+ *
+ *   - If @a pcondensed_targets is non-NULL, set @a *pcondensed_targets
+ *     to an array of URI-decoded targets relative to @a *pcommon, and
+ *     if @a remove_redundancies is TRUE, omit any uris that are
+ *     descendants of another uri in @a targets.  If *pcommon is
+ *     empty, @a *pcondensed_targets will contain absolute uris;
+ *     redundancies can still be removed.  If @a pcondensed_targets is
+ *     NULL, leave it alone.
+ *
+ * Else if there is exactly one target, then
+ *
+ *   - Set @a *pcommon to that target, and
+ *
+ *   - If @a pcondensed_targets is non-NULL, set @a *pcondensed_targets
+ *     to an array containing zero elements.  Else if
+ *     @a pcondensed_targets is NULL, leave it alone.
+ *
+ * If there are no items in @a targets, set @a *pcommon and (if
+ * applicable) @a *pcondensed_targets to @c NULL.
+ *
+ * Allocate @a *pcommon and @a *targets in @a result_pool. Temporary
+ * allocations will be performed in @a scratch_pool.
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_uri_condense_targets(const char **pcommon,
+                         apr_array_header_t **pcondensed_targets,
+                         const apr_array_header_t *targets,
+                         svn_boolean_t remove_redundancies,
+                         apr_pool_t *result_pool,
+                         apr_pool_t *scratch_pool);
+
+/** Join @a path onto @a base_path, checking that @a path does not attempt
+ * to traverse above @a base_path. If @a path or any ".." component within
+ * it resolves to a path above @a base_path, or if @a path is an absolute
+ * path, then set @a *under_root to @c FALSE. Otherwise, set @a *under_root
+ * to @c TRUE and, if @a result_path is not @c NULL, set @a *result_path to
+ * the resulting path, allocated in @a result_pool.
+ *
+ * @a path need not be canonical. @a base_path must be canonical and
+ * @a *result_path will be canonical.
+ *
+ * Note: Use of this function is strongly encouraged. Do not roll your own.
+ * (http://cve.mitre.org/cgi-bin/cvename.cgi?name=2007-3846)
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_dirent_is_under_root(svn_boolean_t *under_root,
+                         const char **result_path,
+                         const char *base_path,
+                         const char *path,
+                         apr_pool_t *result_pool);
+
+/** Set @a *dirent to the path corresponding to the file:// URL @a url, using
+ * the platform-specific file:// rules.
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_uri_get_dirent_from_file_url(const char **dirent,
+                                 const char *url,
+                                 apr_pool_t *pool);
+
+/** Set @a *url to a file:// URL, corresponding to @a dirent using the
+ * platform specific dirent and file:// rules.
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_uri_get_file_url_from_dirent(const char **url,
+                                 const char *dirent,
+                                 apr_pool_t *pool);
 
 #ifdef __cplusplus
 }

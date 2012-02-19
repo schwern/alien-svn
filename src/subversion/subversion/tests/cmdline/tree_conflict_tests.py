@@ -3,17 +3,25 @@
 #  tree_conflict_tests.py:  testing tree-conflict cases.
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -21,26 +29,34 @@ import sys, re, os, traceback
 
 # Our testing module
 import svntest
-from svntest import main,wc
+from svntest import main, wc, verify
 from svntest.actions import run_and_verify_svn
 from svntest.actions import run_and_verify_commit
 from svntest.actions import run_and_verify_resolved
+from svntest.actions import run_and_verify_update
+from svntest.actions import run_and_verify_status
+from svntest.actions import run_and_verify_info
+from svntest.actions import get_virginal_state
+import shutil
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-SkipUnless = svntest.testcase.SkipUnless
-XFail = svntest.testcase.XFail
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
 Item = svntest.wc.StateItem
 AnyOutput = svntest.verify.AnyOutput
 
 # If verbose mode is enabled, print the LINE and a newline.
 def verbose_print(line):
-  if main.verbose_mode:
+  if main.options.verbose:
     print(line)
 
 # If verbose mode is enabled, print the (assumed newline-terminated) LINES.
 def verbose_printlines(lines):
-  if main.verbose_mode:
+  if main.options.verbose:
     for line in lines:
       sys.stdout.write(line)
 
@@ -96,6 +112,7 @@ def incoming_paths(root_dir, parent_dir):
     'F1' : os.path.join(root_dir,   "F1"),
     'F'  : os.path.join(parent_dir, "F"),
     'F2' : os.path.join(parent_dir, "F2-in"),
+    'F3' : os.path.join(root_dir,   "F3"),
     'D1' : os.path.join(root_dir,   "D1"),
     'D'  : os.path.join(parent_dir, "D"),
     'D2' : os.path.join(parent_dir, "D2-in"),
@@ -109,6 +126,7 @@ def localmod_paths(root_dir, parent_dir):
     'F1' : os.path.join(root_dir,   "F1"),
     'F'  : os.path.join(parent_dir, "F"),
     'F2' : os.path.join(parent_dir, "F2-local"),
+    'F3' : os.path.join(root_dir,   "F3"),
     'D1' : os.path.join(root_dir,   "D1"),
     'D'  : os.path.join(parent_dir, "D"),
     'D2' : os.path.join(parent_dir, "D2-local"),
@@ -116,8 +134,9 @@ def localmod_paths(root_dir, parent_dir):
 
 # Perform the action MODACTION on the WC items given by PATHS. The
 # available actions can be seen within this function.
-def modify(modaction, paths):
+def modify(modaction, paths, is_init=True):
   F1 = paths['F1']  # existing file to copy from
+  F3 = paths['F3']  # existing file to copy from
   F  = paths['F']   # target file
   F2 = paths['F2']  # non-existing file to copy/move to
   D1 = paths['D1']  # existing dir to copy from
@@ -150,7 +169,10 @@ def modify(modaction, paths):
     main.run_svn(None, 'add', D)
     main.run_svn(None, 'pset', 'dprop2', 'A prop of added dir D.', D)
   elif modaction == 'fC':  # file Copy (from F1)
-    main.run_svn(None, 'copy', F1, F)
+    if is_init:
+      main.run_svn(None, 'copy', F1, F)
+    else:
+      main.run_svn(None, 'copy', F3, F)
   elif modaction == 'dC':  # dir Copy (from D1)
     main.run_svn(None, 'copy', D1, D)
   elif modaction == 'fM':  # file Move (to F2)
@@ -188,6 +210,7 @@ def modify(modaction, paths):
 
 # File names:
 #   F1 = any existing file
+#   F3 = any existing file
 #   F  = the file-path being acted on
 #   F2 = any non-existent file-path
 #   D1 = any existing dir
@@ -305,8 +328,10 @@ def set_up_repos(wc_dir, br_dir, scenarios):
   # create the file F1 and dir D1 which the tests regard as pre-existing
   paths = incoming_paths(wc_dir, wc_dir)  # second arg is bogus but unimportant
   F1 = paths['F1']  # existing file to copy from
+  F3 = paths['F3']  # existing file to copy from
   main.file_write(F1, "This is initially file F1.\n")
-  main.run_svn(None, 'add', F1)
+  main.file_write(F3, "This is initially file F3.\n")
+  main.run_svn(None, 'add', F1, F3)
   D1 = paths['D1']  # existing dir to copy from
   main.run_svn(None, 'mkdir', D1)
 
@@ -400,104 +425,98 @@ def ensure_tree_conflict(sbox, operation,
 
       verbose_print("--- Making local mods")
       for modaction in loc_action:
-        modify(modaction, localmod_paths(".", target_path))
+        modify(modaction, localmod_paths(".", target_path), is_init=False)
       if commit_local_mods:
         run_and_verify_svn(None, AnyOutput, [],
                            'commit', target_path,
                            '-m', 'Mods in target branch.')
         head_rev += 1
 
-      # What do we want to test for? (This selection could in future be
-      # passed in to this function as a parameter.)
-      test_what = [
-        'commit-ood',
-        'action',  # required for any of the following ones to work
-        'notify',
-        'commit-c',
-        'status-c',
-        'resolve',  # required for any of the following ones to work
-        'status-nc',
-        #'commit-ok',
-        ]
-
-      if 'commit-ood' in test_what:
-        # For update, verify the pre-condition that WC is out of date.
-        # For switch/merge, there is no such precondition.
-        if operation == 'update':
-          verbose_print("--- Trying to commit (expecting 'out-of-date' error)")
-          run_and_verify_commit(".", None, None, "Commit failed",
-                                target_path)
+      # For update, verify the pre-condition that WC is out of date.
+      # For switch/merge, there is no such precondition.
+      if operation == 'update':
+        verbose_print("--- Trying to commit (expecting 'out-of-date' error)")
+        run_and_verify_commit(".", None, None, "Commit failed",
+                              target_path)
 
       if modaction.startswith('f'):
-        victim = os.path.join(target_path, 'F')
+        victim_name = 'F'
       else:
-        victim = os.path.join(target_path, 'D')
+        victim_name = 'D'
+      victim_path = os.path.join(target_path, victim_name)
 
       # Perform the operation that tries to apply incoming changes to the WC.
       # The command is expected to do something (and give some output),
       # and it should raise a conflict but not an error.
-      if 'action' in test_what:
-        # Determine what notification to expect
-        if 'notify' in test_what:
-          expected_stdout = svntest.verify.ExpectedOutput("   C " + victim
-                                                          + "\n",
-                                                          match_all=False)
-        else:
-          expected_stdout = svntest.verify.AnyOutput
-        # Do the main action
-        if operation == 'update':
-          verbose_print("--- Updating")
-          run_and_verify_svn(None, expected_stdout, [],
-                             'update', target_path)
-        elif operation == 'switch':
-          verbose_print("--- Switching")
-          run_and_verify_svn(None, expected_stdout, [],
-                             'switch', source_url, target_path)
-        elif operation == 'merge':
-          verbose_print("--- Merging")
-          run_and_verify_svn(None, expected_stdout, [],
-                             'merge', '--ignore-ancestry',
-                             '-r', str(source_left_rev) + ':' + str(source_right_rev),
-                             source_url, target_path)
-        else:
-          raise Exception("unknown operation: '" + operation + "'")
-
-      if 'commit-c' in test_what:
-        verbose_print("--- Trying to commit (expecting 'conflict' error)")
-        ### run_and_verify_commit() requires an "output_tree" argument, but
-        # here we get away with passing None because we know an implementation
-        # detail: namely that it's not going to look at that argument if it
-        # gets the stderr that we're expecting.
-        run_and_verify_commit(".", None, None, ".*conflict.*", victim)
-
-      if 'status-c' in test_what:
-        verbose_print("--- Checking that 'status' reports the conflict")
-        expected_stdout = svntest.verify.RegexOutput("^......C.* " +
-                                                     re.escape(victim) + "$",
-                                                     match_all=False)
+      expected_stdout = svntest.verify.ExpectedOutput("   C " + victim_path
+                                                      + "\n",
+                                                      match_all=False)
+      # Do the main action
+      if operation == 'update':
+        verbose_print("--- Updating")
         run_and_verify_svn(None, expected_stdout, [],
-                           'status', victim)
+                           'update', target_path)
+      elif operation == 'switch':
+        verbose_print("--- Switching")
+        run_and_verify_svn(None, expected_stdout, [],
+                           'switch', source_url, target_path)
+      elif operation == 'merge':
+        verbose_print("--- Merging")
+        run_and_verify_svn(None, expected_stdout, [],
+                           'merge', '--ignore-ancestry',
+                           '--allow-mixed-revisions',
+                           '-r', str(source_left_rev) + ':' + str(source_right_rev),
+                           source_url, target_path)
+      else:
+        raise Exception("unknown operation: '" + operation + "'")
 
-      if 'resolve' in test_what:
-        verbose_print("--- Resolving the conflict")
-        # Make sure resolving the parent does nothing.
-        run_and_verify_resolved([], os.path.dirname(victim))
-        # The real resolved call.
-        run_and_verify_resolved([victim])
+      verbose_print("--- Checking that 'info' reports the conflict")
+      if operation == 'update' or operation == 'switch':
+        incoming_left_rev = target_start_rev
+      else:
+        incoming_left_rev = source_left_rev
+      if operation == 'update' or operation == 'merge':
+        incoming_right_rev = source_right_rev
+      else:
+        incoming_right_rev = head_rev
+      expected_info = { 'Tree conflict' : '.* upon ' + operation +
+          r'.* \((none|(file|dir).*' +
+            re.escape(victim_name + '@' + str(incoming_left_rev)) + r')' +
+          r'.* \((none|(file|dir).*' +
+            re.escape(victim_name + '@' + str(incoming_right_rev)) + r')' }
+      run_and_verify_info([expected_info], victim_path)
 
-      if 'status-nc' in test_what:
-        verbose_print("--- Checking that 'status' does not report a conflict")
-        exitcode, stdout, stderr = run_and_verify_svn(None, None, [],
-                                                  'status', victim)
-        for line in stdout:
-          if line[6] == 'C': # and line.endswith(victim + '\n'):
-            raise svntest.Failure("unexpected status C") # on path '" + victim + "'")
+      verbose_print("--- Trying to commit (expecting 'conflict' error)")
+      ### run_and_verify_commit() requires an "output_tree" argument, but
+      #   here we get away with passing None because we know an implementation
+      #   detail: namely that it's not going to look at that argument if it
+      #   gets the stderr that we're expecting.
+      run_and_verify_commit(".", None, None, ".*conflict.*", victim_path)
 
-      if 'commit-ok' in test_what:
-        verbose_print("--- Committing (should now succeed)")
-        run_and_verify_svn(None, None, [],
-                           'commit', '-m', '', target_path)
-        target_start_rev += 1
+      verbose_print("--- Checking that 'status' reports the conflict")
+      expected_stdout = svntest.verify.RegexOutput("^......C.* " +
+                                                   re.escape(victim_path) + "$",
+                                                   match_all=False)
+      run_and_verify_svn(None, expected_stdout, [],
+                         'status', victim_path)
+
+      verbose_print("--- Resolving the conflict")
+      # Make sure resolving the parent does nothing.
+      run_and_verify_resolved([], os.path.dirname(victim_path))
+      # The real resolved call.
+      run_and_verify_resolved([victim_path])
+
+      verbose_print("--- Checking that 'status' does not report a conflict")
+      exitcode, stdout, stderr = run_and_verify_svn(None, None, [],
+                                                'status', victim_path)
+      for line in stdout:
+        if line[6] == 'C': # and line.endswith(victim_path + '\n'):
+          raise svntest.Failure("unexpected status C") # on victim_path
+
+      # verbose_print("--- Committing (should now succeed)")
+      # run_and_verify_svn(None, None, [],
+      #                    'commit', '-m', '', target_path)
+      # target_start_rev += 1
 
       verbose_print("")
 
@@ -616,6 +635,8 @@ def up_sw_dir_del_onto_del(sbox):
 #   Adding         branch1\dC\D
 #
 #   Committed revision 4.
+@XFail(svntest.main.is_ra_type_dav)
+@Issue(3314)
 def up_sw_dir_add_onto_add(sbox):
   "up/sw dir: add onto add"
   # WC state: as scheduled (no obstruction)
@@ -664,6 +685,9 @@ def merge_dir_mod_onto_not_dir(sbox):
   test_tc_merge(sbox, d_mods, br_scen = d_dels + d_rpl_f)
   test_tc_merge(sbox2, d_mods, wc_scen = d_dels)
 
+# Test for issue #3150 'tree conflicts with directories as victims'.
+@XFail()
+@Issue(3150)
 def merge_dir_del_onto_not_same(sbox):
   "merge dir: del/rpl/mv onto not-same"
   sbox2 = sbox.clone_dependent()
@@ -682,6 +706,705 @@ def merge_dir_add_onto_not_none(sbox):
   test_tc_merge(sbox, d_adds, br_scen = d_adds)  ### + f_adds (at path "D")
   test_tc_merge(sbox2, d_adds, wc_scen = d_adds)  ### + f_adds (at path "D")
 
+#----------------------------------------------------------------------
+
+@Issue(3805)
+def force_del_tc_inside(sbox):
+  "--force del on dir with TCs inside"
+
+  #          A/C       <-  delete with --force
+  # A  +  C  A/C/dir
+  # A  +  C  A/C/file
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  C   = os.path.join(wc_dir, "A", "C")
+  dir = os.path.join(wc_dir, "A", "C", "dir")
+  file = os.path.join(wc_dir, "A", "C", "file")
+
+  # Add dir
+  main.run_svn(None, 'mkdir', dir)
+
+  # Add file
+  content = "This is the file 'file'.\n"
+  main.file_append(file, content)
+  main.run_svn(None, 'add', file)
+
+  main.run_svn(None, 'commit', '-m', 'Add dir and file', wc_dir)
+
+  # Remove dir and file in r3.
+  main.run_svn(None, 'delete', dir, file)
+  main.run_svn(None, 'commit', '-m', 'Remove dir and file', wc_dir)
+
+  # Warp back to -r2, dir and file coming back.
+  main.run_svn(None, 'update', '-r2', wc_dir)
+
+  # Set a meaningless prop on each dir and file
+  run_and_verify_svn(None,
+                     ["property 'propname' set on '" + dir + "'\n"],
+                     [], 'ps', 'propname', 'propval', dir)
+  run_and_verify_svn(None,
+                     ["property 'propname' set on '" + file + "'\n"],
+                     [], 'ps', 'propname', 'propval', file)
+
+  # Update WC to HEAD, tree conflicts result dir and file
+  # because there are local mods on the props.
+  expected_output = wc.State(wc_dir, {
+    'A/C/dir' : Item(status='  ', treeconflict='C'),
+    'A/C/file' : Item(status='  ', treeconflict='C'),
+    })
+
+  expected_disk = main.greek_state.copy()
+  expected_disk.add({
+    'A/C/dir' : Item(props={'propname' : 'propval'}),
+    'A/C/file' : Item(contents=content, props={'propname' : 'propval'}),
+    })
+
+  expected_status = get_virginal_state(wc_dir, 2)
+  expected_status.tweak(wc_rev='3')
+  expected_status.add({
+    'A/C/dir' : Item(status='A ', wc_rev='-', copied='+', treeconflict='C'),
+    'A/C/file' : Item(status='A ', wc_rev='-', copied='+', treeconflict='C'),
+    })
+  run_and_verify_update(wc_dir,
+                        expected_output, expected_disk, expected_status,
+                        None, None, None, None, None, 1,
+                        wc_dir)
+
+  # Delete A/C with --force, in effect disarming the tree-conflicts.
+  run_and_verify_svn(None,
+                     verify.UnorderedOutput(['D         ' + C + '\n',
+                                             'D         ' + dir + '\n',
+                                             'D         ' + file + '\n']),
+                     [], 'delete', C, '--force')
+
+  # Verify deletion status
+  # Note: the tree conflicts are removed because we forced the delete.
+  expected_status.tweak('A/C', status='D ')
+  expected_status.remove('A/C/dir', 'A/C/file')
+
+  run_and_verify_status(wc_dir, expected_status)
+
+  # Commit, remove the "disarmed" tree-conflict.
+  expected_output = wc.State(wc_dir, { 'A/C' : Item(verb='Deleting') })
+
+  expected_status.remove('A/C')
+
+  run_and_verify_commit(wc_dir,
+                        expected_output, expected_status, None,
+                        wc_dir)
+
+#----------------------------------------------------------------------
+
+@Issue(3805)
+def force_del_tc_is_target(sbox):
+  "--force del on tree-conflicted targets"
+  #          A/C
+  # A  +  C  A/C/dir   <-  delete with --force
+  # A  +  C  A/C/file  <-  delete with --force
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  C   = os.path.join(wc_dir, "A", "C")
+  dir = os.path.join(wc_dir, "A", "C", "dir")
+  file = os.path.join(wc_dir, "A", "C", "file")
+
+  # Add dir
+  main.run_svn(None, 'mkdir', dir)
+
+  # Add file
+  content = "This is the file 'file'.\n"
+  main.file_append(file, content)
+  main.run_svn(None, 'add', file)
+
+  main.run_svn(None, 'commit', '-m', 'Add dir and file', wc_dir)
+
+  # Remove dir and file in r3.
+  main.run_svn(None, 'delete', dir, file)
+  main.run_svn(None, 'commit', '-m', 'Remove dir and file', wc_dir)
+
+  # Warp back to -r2, dir and file coming back.
+  main.run_svn(None, 'update', '-r2', wc_dir)
+
+  # Set a meaningless prop on each dir and file
+  run_and_verify_svn(None,
+                     ["property 'propname' set on '" + dir + "'\n"],
+                     [], 'ps', 'propname', 'propval', dir)
+  run_and_verify_svn(None,
+                     ["property 'propname' set on '" + file + "'\n"],
+                     [], 'ps', 'propname', 'propval', file)
+
+  # Update WC to HEAD, tree conflicts result dir and file
+  # because there are local mods on the props.
+  expected_output = wc.State(wc_dir, {
+    'A/C/dir' : Item(status='  ', treeconflict='C'),
+    'A/C/file' : Item(status='  ', treeconflict='C'),
+    })
+
+  expected_disk = main.greek_state.copy()
+  expected_disk.add({
+    'A/C/dir' : Item(props={'propname' : 'propval'}),
+    'A/C/file' : Item(contents=content, props={'propname' : 'propval'}),
+    })
+
+  expected_status = get_virginal_state(wc_dir, 2)
+  expected_status.tweak(wc_rev='3')
+  expected_status.add({
+    'A/C/dir' : Item(status='A ', wc_rev='-', copied='+', treeconflict='C'),
+    'A/C/file' : Item(status='A ', wc_rev='-', copied='+', treeconflict='C'),
+    })
+  run_and_verify_update(wc_dir,
+                        expected_output, expected_disk, expected_status,
+                        None, None, None, None, None, 1,
+                        wc_dir)
+
+  # Delete nodes with --force, in effect disarming the tree-conflicts.
+  run_and_verify_svn(None,
+                     ['D         ' + dir + '\n',
+                      'D         ' + file + '\n'],
+                     [],
+                     'delete', dir, file, '--force')
+
+  # The rm --force now removes the nodes and the tree conflicts on them
+  expected_status.remove('A/C/dir', 'A/C/file')
+  run_and_verify_status(wc_dir, expected_status)
+
+  # Commit, remove the "disarmed" tree-conflict.
+  expected_output = wc.State(wc_dir, {})
+
+  run_and_verify_commit(wc_dir,
+                        expected_output, expected_status, None,
+                        wc_dir)
+
+#----------------------------------------------------------------------
+
+# A regression test to check that "rm --keep-local" on a tree-conflicted
+# node leaves the WC in a valid state in which simple commands such as
+# "status" do not error out.  At one time the command left the WC in an
+# invalid state.  (Before r989189, "rm --keep-local" used to have the effect
+# of "disarming" the conflict in the sense that "commit" would ignore the
+# conflict.)
+
+def query_absent_tree_conflicted_dir(sbox):
+  "query an unversioned tree-conflicted dir"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  # Some paths we'll care about
+  C_path = os.path.join(wc_dir, "A", "C")
+  C_C_path = os.path.join(wc_dir, "A", "C", "C")
+
+  # Add a directory A/C/C as r2.
+  main.run_svn(None, 'mkdir', C_C_path)
+  main.run_svn(None, 'commit', '-m', 'Add directory A/C/C', wc_dir)
+
+  # Remove that directory A/C/C as r3.
+  main.run_svn(None, 'delete', C_C_path)
+  main.run_svn(None, 'commit', '-m', 'Remove directory A/C/C', wc_dir)
+
+  # Warp back to -r2 with the directory added.
+  main.run_svn(None, 'update', '-r2', wc_dir)
+
+  # Set a meaningless prop on A/C/C
+  run_and_verify_svn(None,
+                     ["property 'propname' set on '" + C_C_path + "'\n"],
+                     [], 'ps', 'propname', 'propval', C_C_path)
+
+  # Update WC to HEAD, a tree conflict results on A/C/C because of the
+  # working prop on A/C/C.
+  expected_output = wc.State(wc_dir, {
+    'A/C/C' : Item(status='  ', treeconflict='C'),
+    })
+  expected_disk = main.greek_state.copy()
+  expected_disk.add({'A/C/C' : Item(props={'propname' : 'propval'})})
+  expected_status = get_virginal_state(wc_dir, 1)
+  expected_status.tweak(wc_rev='3')
+  expected_status.add({'A/C/C' : Item(status='A ',
+                                      wc_rev='-',
+                                      copied='+',
+                                      treeconflict='C')})
+  run_and_verify_update(wc_dir,
+                        expected_output, expected_disk, expected_status,
+                        None, None, None, None, None, 1,
+                        wc_dir)
+
+  # Delete A/C with --keep-local.
+  run_and_verify_svn(None,
+                     verify.UnorderedOutput(['D         ' + C_C_path + '\n',
+                                             'D         ' + C_path + '\n']),
+                     [],
+                     'delete', C_path, '--keep-local')
+
+  expected_status.tweak('A/C', status='D ')
+  expected_status.remove('A/C/C')
+  run_and_verify_status(wc_dir, expected_status)
+
+  # Try to access the absent tree-conflict as explicit target.
+  # These used to fail like this:
+  ## CMD: svn status -v -u -q
+  ## [...]
+  ## subversion/svn/status-cmd.c:248: (apr_err=155035)
+  ## subversion/svn/util.c:953: (apr_err=155035)
+  ## subversion/libsvn_client/status.c:270: (apr_err=155035)
+  ## subversion/libsvn_wc/lock.c:607: (apr_err=155035)
+  ## subversion/libsvn_wc/entries.c:1607: (apr_err=155035)
+  ## subversion/libsvn_wc/wc_db.c:3288: (apr_err=155035)
+  ## svn: Expected node '/.../tree_conflict_tests-20/A/C' to be added.
+
+  # A/C/C is now unversioned, using status:
+  expected_output = wc.State(wc_dir, {
+    })
+  run_and_verify_status(C_C_path, expected_output)
+
+  # using info:
+  run_and_verify_svn(None, None, ".*W155010.*The node.*was not found.*",
+                     'info', C_C_path)
+
+#----------------------------------------------------------------------
+
+@Issue(3608)
+def up_add_onto_add_revert(sbox):
+  "issue #3608: reverting an add onto add conflict"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  wc2_dir = sbox.add_wc_path('wc2')
+  svntest.actions.run_and_verify_svn(None, None, [], 'checkout',
+                                     sbox.repo_url, wc2_dir)
+
+  file1 = os.path.join(wc_dir, 'newfile')
+  file2 = os.path.join(wc2_dir, 'newfile')
+
+  dir1 = os.path.join(wc_dir, 'NewDir')
+  dir2 = os.path.join(wc2_dir, 'NewDir')
+
+  main.run_svn(None, 'cp', os.path.join(wc_dir, 'iota'), file1)
+  main.run_svn(None, 'cp', os.path.join(wc2_dir, 'iota'), file2)
+
+  main.run_svn(None, 'cp', os.path.join(wc_dir, 'A/C'), dir1)
+  main.run_svn(None, 'cp', os.path.join(wc2_dir, 'A/C'), dir2)
+
+  main.run_svn(None, 'ci', wc_dir, '-m', 'Added file')
+
+  expected_disk = main.greek_state.copy()
+  expected_disk.add({
+    'newfile'           : Item(contents="This is the file 'iota'.\n"),
+    'NewDir'            : Item(),
+    })
+
+  expected_status = get_virginal_state(wc2_dir, 2)
+  expected_status.add({
+    'newfile' : Item(status='R ', copied='+', treeconflict='C', wc_rev='-'),
+    'NewDir'  : Item(status='R ', copied='+', treeconflict='C', wc_rev='-'),
+    })
+
+  run_and_verify_update(wc2_dir,
+                        None, expected_disk, expected_status,
+                        None, None, None, None, None, 1,
+                        wc2_dir)
+
+  # Currently (r927086), this removes dir2 and file2 in a way that
+  # they don't reappear after update.
+  main.run_svn(None, 'revert', file2)
+  main.run_svn(None, 'revert', dir2)
+
+  expected_status = get_virginal_state(wc2_dir, 2)
+  expected_status.add({
+    'newfile' : Item(status='  ', wc_rev='2'),
+    'NewDir'  : Item(status='  ', wc_rev='2'),
+    })
+
+  # Expected behavior is that after revert + update the tree matches
+  # the repository
+  run_and_verify_update(wc2_dir,
+                        None, expected_disk, expected_status,
+                        None, None, None, None, None, 1,
+                        wc2_dir)
+
+
+#----------------------------------------------------------------------
+# Regression test for issue #3525 and #3533
+#
+@Issues(3525,3533)
+def lock_update_only(sbox):
+  "lock status update shouldn't flag tree conflict"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  # Make a second copy of the working copy
+  wc_b = sbox.add_wc_path('_b')
+  svntest.actions.duplicate_dir(wc_dir, wc_b)
+
+  fname = 'iota'
+  file_path = os.path.join(sbox.wc_dir, fname)
+  file_path_b = os.path.join(wc_b, fname)
+
+  # Lock a file as wc_author, and schedule the file for deletion.
+  svntest.actions.run_and_verify_svn(None, ".*locked by user", [], 'lock',
+                                     '-m', '', file_path)
+  svntest.main.run_svn(None, 'delete', file_path)
+
+  # In our other working copy, steal that lock.
+  svntest.actions.run_and_verify_svn(None, ".*locked by user", [], 'lock',
+                                     '-m', '', '--force', file_path)
+
+  # Now update the first working copy.  It should appear as a no-op.
+  expected_disk = main.greek_state.copy()
+  expected_disk.remove('iota')
+  expected_status = get_virginal_state(wc_dir, 1)
+  expected_status.tweak('iota', status='D ', writelocked='K')
+  run_and_verify_update(wc_dir,
+                        None, expected_disk, expected_status,
+                        None, None, None, None, None, 1,
+                        wc_dir)
+
+
+#----------------------------------------------------------------------
+@Issue(3469)
+def at_directory_external(sbox):
+  "tree conflict at directory external"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  # r2: create a directory external: ^/E -> ^/A
+  svntest.main.run_svn(None, 'ps', 'svn:externals', '^/A E', wc_dir)
+  svntest.main.run_svn(None, 'commit', '-m', 'ps', wc_dir)
+  svntest.main.run_svn(None, 'update', wc_dir)
+
+  # r3: modify ^/A/B/E/alpha
+  open(sbox.ospath('A/B/E/alpha'), 'a').write('This is still A/B/E/alpha.\n')
+  svntest.main.run_svn(None, 'commit', '-m', 'file mod', wc_dir)
+  svntest.main.run_svn(None, 'update', wc_dir)
+  merge_rev = svntest.main.youngest(sbox.repo_dir)
+
+  # r4: create ^/A/B/E/alpha2
+  open(sbox.ospath('A/B/E/alpha2'), 'a').write("This is the file 'alpha2'.\n")
+  svntest.main.run_svn(None, 'add', sbox.ospath('A/B/E/alpha2'))
+  svntest.main.run_svn(None, 'commit', '-m', 'file add', wc_dir)
+  svntest.main.run_svn(None, 'update', wc_dir)
+  merge_rev2 = svntest.main.youngest(sbox.repo_dir)
+
+  # r5: merge those
+  svntest.main.run_svn(None, "merge", '-c', merge_rev, '^/A/B', wc_dir)
+  svntest.main.run_svn(None, "merge", '-c', merge_rev2, '^/A/B', wc_dir)
+
+#----------------------------------------------------------------------
+@Issue(3779)
+### This test currently passes on the current behaviour.
+### However in many cases it is unclear whether the current behaviour is
+### correct. Review is still required.
+def actual_only_node_behaviour(sbox):
+  "test behaviour with actual-only nodes"
+
+  sbox.build()
+  A_url = sbox.repo_url + '/A'
+  A_copy_url = sbox.repo_url + '/A_copy'
+  wc_dir = sbox.wc_dir
+  foo_path = sbox.ospath('A/foo', wc_dir)
+
+  # r2: copy ^/A -> ^/A_copy
+  sbox.simple_repo_copy('A', 'A_copy')
+
+  # r3: add a file foo on ^/A_copy branch
+  wc2_dir = sbox.add_wc_path('wc2')
+  foo2_path = sbox.ospath('foo', wc2_dir)
+  svntest.main.run_svn(None, "checkout", A_copy_url, wc2_dir)
+  svntest.main.file_write(foo2_path, "This is initially file foo.\n")
+  svntest.main.run_svn(None, "add", foo2_path)
+  svntest.main.run_svn(None, "commit", '-m', svntest.main.make_log_msg(),
+                       foo2_path)
+
+  # r4: make a change to foo
+  svntest.main.file_append(foo2_path, "This is a new line in file foo.\n")
+  svntest.main.run_svn(None, "commit", '-m', svntest.main.make_log_msg(),
+                       wc2_dir)
+
+  # cherry-pick r4 to ^/A -- the resulting tree conflict creates
+  # an actual-only node for 'A/foo'
+  sbox.simple_update()
+  svntest.main.run_svn(None, "merge", '-c', '4', A_copy_url,
+                       os.path.join(wc_dir, 'A'))
+
+  # Attempt running various commands on foo and verify expected behavior
+
+  # add
+  expected_stdout = None
+  expected_stderr = ".*foo.*is an existing item in conflict.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "add", foo_path)
+
+  # add (with an existing obstruction of foo)
+  svntest.main.file_write(foo_path, "This is an obstruction of foo.\n")
+  expected_stdout = None
+  expected_stderr = ".*foo.*is an existing item in conflict.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "add", foo_path)
+  os.remove(foo_path) # remove obstruction
+
+  # blame (praise, annotate, ann)
+  expected_stdout = None
+  expected_stderr = ".*foo.*not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "blame", foo_path)
+
+  # cat
+  expected_stdout = None
+  expected_stderr = ".*foo.*not under version control.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "cat", foo_path)
+
+  # cat -rBASE
+  expected_stdout = None
+  expected_stderr = ".*foo.*not under version control.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "cat", "-r", "BASE", foo_path)
+  # changelist (cl)
+  expected_stdout = None
+  expected_stderr = ".*svn: warning: W155010: The node '.*foo' was not found."
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "changelist", "my_changelist", foo_path)
+
+  # checkout (co)
+  ### this does not error out -- needs review
+  expected_stdout = None
+  expected_stderr = []
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "checkout", A_copy_url, foo_path)
+  ### for now, ignore the fact that checkout succeeds and remove the nested
+  ### working copy so we can test more commands
+  shutil.rmtree(foo_path)
+
+  # cleanup
+  expected_stdout = None
+  expected_stderr = ".*foo.*is not a working copy directory"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "cleanup", foo_path)
+  # commit (ci)
+  expected_stdout = None
+  expected_stderr = ".*foo.*remains in conflict.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "commit", foo_path)
+  # copy (cp)
+  expected_stdout = None
+  expected_stderr = ".*foo.*does not exist.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "copy", foo_path, foo_path + ".copy")
+
+  # delete (del, remove, rm)
+  expected_stdout = None
+  expected_stderr = ".*foo.*is not under version control.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "delete", foo_path)
+
+  # diff (di)
+  expected_stdout = None
+  expected_stderr = ".*foo.*is not under version control.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "diff", foo_path)
+  # export
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "export", foo_path, sbox.get_tempname())
+  # import
+  expected_stdout = None
+  expected_stderr = ".*foo.*does not exist.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "import", '-m', svntest.main.make_log_msg(),
+                     foo_path, sbox.repo_url + '/foo_imported')
+
+  # info
+  expected_info = {
+    'Tree conflict': 'local missing, incoming edit upon merge.*',
+    'Name': 'foo',
+    'Schedule': 'normal',
+    'Node Kind': 'none',
+    'Path': re.escape(sbox.ospath('A/foo')),
+  }
+  run_and_verify_info([expected_info], foo_path)
+
+  # list (ls)
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "list", foo_path)
+
+  # lock
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "lock", foo_path)
+  # log
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "log", foo_path)
+  # merge
+  # note: this is intentionally a no-op merge that does not record mergeinfo
+  expected_stdout = None
+  expected_stderr = ".*foo.*does not exist.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "merge", '--ignore-ancestry', '-c', '4',
+                     A_copy_url + '/mu', foo_path)
+
+  # mergeinfo
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "mergeinfo", A_copy_url + '/foo', foo_path)
+  # mkdir
+  expected_stdout = None
+  expected_stderr = ".*foo.*is an existing item in conflict.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "mkdir", foo_path)
+
+  # move (mv, rename, ren)
+  expected_stdout = None
+  expected_stderr = ".*foo.*does not exist.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "move", foo_path, foo_path + ".moved")
+  # patch
+  expected_stdout = None
+  expected_stderr = ".*foo.*does not exist.*"
+  patch_path = sbox.get_tempname()
+  f = open(patch_path, 'w')
+  patch_data = [
+    "--- foo	(revision 2)\n"
+    "+++ foo	(working copy)\n"
+    "@@ -1 +1,2 @@\n"
+    " foo\n"
+    " +foo\n"
+  ]
+  for line in patch_data:
+    f.write(line)
+  f.close()
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "patch", patch_path, sbox.ospath("A/foo"))
+
+  # propdel (pdel, pd)
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "propdel", "svn:eol-style", foo_path)
+
+  # propget (pget, pg)
+  expected_stdout = None
+  expected_stderr = ".*foo.*is not under version control.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "propget", "svn:eol-style", foo_path)
+
+  # proplist (plist, pl)
+  expected_stdout = None
+  expected_stderr = ".*foo.*is not under version control.*"
+  svntest.actions.run_and_verify_svn(None, expected_stdout, expected_stderr,
+                                     "proplist", foo_path)
+
+  # propset (pset, ps)
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "propset", "svn:eol-style", "native", foo_path)
+
+  # relocate
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "relocate", A_copy_url + "/foo", foo_path)
+
+  # resolve
+  expected_stdout = "Resolved conflicted state of.*foo.*"
+  expected_stderr = []
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "resolve", "--accept", "working", foo_path)
+
+  # revert the entire working copy and repeat the merge so we can test
+  # more commands
+  svntest.main.run_svn(None, "revert", "-R", wc_dir)
+  svntest.main.run_svn(None, "merge", '-c', '4', A_copy_url,
+                       os.path.join(wc_dir, 'A'))
+
+  # revert
+  expected_stdout = "Reverted.*foo.*"
+  expected_stderr = []
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "revert", foo_path)
+
+  # revert the entire working copy and repeat the merge so we can test
+  # more commands
+  svntest.main.run_svn(None, "revert", "-R", wc_dir)
+  svntest.main.run_svn(None, "merge", '-c', '4', A_copy_url,
+                       os.path.join(wc_dir, 'A'))
+
+  # status (stat, st)
+  expected_status = wc.State(foo_path, {
+    '' : Item(status='! ', treeconflict='C'),
+  })
+  run_and_verify_status(foo_path, expected_status)
+
+  # switch (sw)
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "switch", A_copy_url + "/foo", foo_path)
+
+  # unlock
+  expected_stdout = None
+  expected_stderr = ".*foo.*was not found.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "unlock", foo_path)
+
+  # update (up)
+  expected_stdout = [
+   "Skipped '%s' -- Node remains in conflict\n" % sbox.ospath('A/foo'),
+   "Summary of conflicts:\n",
+   "  Skipped paths: 1\n",
+  ]
+  expected_stderr = []
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "update", foo_path)
+
+  # upgrade
+  expected_stdout = None
+  expected_stderr = ".*Can't upgrade.*foo.*"
+  run_and_verify_svn(None, expected_stdout, expected_stderr,
+                     "upgrade", foo_path)
+
+#----------------------------------------------------------------------
+# Regression test for an issue #3526 variant
+#
+@Issues(3526)
+def update_dir_with_not_present(sbox):
+  "lock status update shouldn't flag tree conflict"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  newtxt = sbox.ospath('A/B/new.txt')
+
+  main.file_write(newtxt, 'new.txt')
+  sbox.simple_add('A/B/new.txt')
+  sbox.simple_commit()
+
+  sbox.simple_move('A/B/new.txt', 'A/C/newer.txt')
+  sbox.simple_commit()
+  sbox.simple_rm('A/B')
+
+  # We can't commit this without updating (ra_svn produces its own error)
+  run_and_verify_svn(None, None, "svn: (E155011|E160028): Dir.*B.*out of date",
+                     'ci', '-m', '', wc_dir)
+
+  # So we run update
+  run_and_verify_svn(None, None, [],
+                     'up', wc_dir)
+
+  # And now we can commit
+  run_and_verify_svn(None, None, [],
+                     'ci', '-m', '', wc_dir)
 
 #######################################################################
 # Run the tests
@@ -696,16 +1419,23 @@ test_list = [ None,
               up_sw_dir_mod_onto_del,
               up_sw_dir_del_onto_mod,
               up_sw_dir_del_onto_del,
-              XFail(up_sw_dir_add_onto_add,
-                    svntest.main.is_ra_type_dav),
+              up_sw_dir_add_onto_add,
               merge_file_mod_onto_not_file,
               merge_file_del_onto_not_same,
               merge_file_del_onto_not_file,
               merge_file_add_onto_not_none,
               merge_dir_mod_onto_not_dir,
-              XFail(merge_dir_del_onto_not_same),
+              merge_dir_del_onto_not_same,
               merge_dir_del_onto_not_dir,
               merge_dir_add_onto_not_none,
+              force_del_tc_inside,
+              force_del_tc_is_target,
+              query_absent_tree_conflicted_dir,
+              up_add_onto_add_revert,
+              lock_update_only,
+              at_directory_external,
+              actual_only_node_behaviour,
+              update_dir_with_not_present,
              ]
 
 if __name__ == '__main__':

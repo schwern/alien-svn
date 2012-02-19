@@ -2,17 +2,22 @@
  * prompt.c -- ask the user for authentication information.
  *
  * ====================================================================
- * Copyright (c) 2000-2006, 2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -44,17 +49,9 @@
 static apr_status_t wait_for_input(apr_file_t *f,
                                    apr_pool_t *pool)
 {
+#ifndef WIN32
   apr_pollfd_t pollset;
   int srv, n;
-
-/* APR specs say things that are unimplemented are supposed to return
- * APR_ENOTIMPL.  But when trying to use APR_POLL_FILE with apr_poll
- * on Windows it returns APR_EBADF instead.  So just return APR_ENOTIMPL
- * ourselves here.
- */
-#ifdef WIN32
-  return APR_ENOTIMPL;
-#endif /* WIN32 */
 
   pollset.desc_type = APR_POLL_FILE;
   pollset.desc.f = f;
@@ -67,6 +64,14 @@ static apr_status_t wait_for_input(apr_file_t *f,
     return APR_SUCCESS;
 
   return srv;
+#else
+  /* APR specs say things that are unimplemented are supposed to return
+   * APR_ENOTIMPL.  But when trying to use APR_POLL_FILE with apr_poll
+   * on Windows it returns APR_EBADF instead.  So just return APR_ENOTIMPL
+   * ourselves here.
+   */
+  return APR_ENOTIMPL;
+#endif
 }
 
 /* Set @a *result to the result of prompting the user with @a
@@ -127,6 +132,8 @@ prompt(const char **result,
             }
           else if (c == APR_EOL_STR[0])
             {
+              /* GCC might complain here: "warning: will never be executed"
+               * That's fine. This is a compile-time check for "\r\n\0" */
               if (sizeof(APR_EOL_STR) == 3)
                 {
                   saw_first_half_of_eol = TRUE;
@@ -140,7 +147,7 @@ prompt(const char **result,
                 SVN_ERR_MALFUNCTION();
             }
 
-          svn_stringbuf_appendbytes(strbuf, &c, 1);
+          svn_stringbuf_appendbyte(strbuf, c);
         }
     }
   else
@@ -341,7 +348,7 @@ svn_cmdline_auth_ssl_client_cert_prompt
   SVN_ERR(maybe_print_realm(realm, pool));
   SVN_ERR(prompt(&cert_file, _("Client certificate filename: "),
                  FALSE, pb, pool));
-  SVN_ERR(svn_path_get_absolute(&abs_cert_file, cert_file, pool));
+  SVN_ERR(svn_dirent_get_absolute(&abs_cert_file, cert_file, pool));
 
   cred = apr_palloc(pool, sizeof(*cred));
   cred->cert_file = abs_cert_file;
@@ -411,12 +418,14 @@ plaintext_prompt_helper(svn_boolean_t *may_save_plaintext,
           else
             return err;
         }
-      if (apr_strnatcasecmp(answer, _("yes")) == 0)
+      if (apr_strnatcasecmp(answer, _("yes")) == 0 ||
+          apr_strnatcasecmp(answer, _("y")) == 0)
         {
           *may_save_plaintext = TRUE;
           answered = TRUE;
         }
-      else if (apr_strnatcasecmp(answer, _("no")) == 0)
+      else if (apr_strnatcasecmp(answer, _("no")) == 0 ||
+               apr_strnatcasecmp(answer, _("n")) == 0)
         {
           *may_save_plaintext = FALSE;
           answered = TRUE;

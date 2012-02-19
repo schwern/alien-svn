@@ -2,17 +2,22 @@
  * ends.
  *
  * ====================================================================
- * Copyright (c) 2007, 2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -22,18 +27,20 @@
 #include <apr_strings.h>
 
 #include "svn_fs.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_private_config.h"
 
 #include "private/svn_fs_util.h"
+#include "private/svn_fspath.h"
 #include "../libsvn_fs/fs-loader.h"
 
 const char *
 svn_fs__canonicalize_abspath(const char *path, apr_pool_t *pool)
 {
   char *newpath;
-  int path_len;
-  int path_i = 0, newpath_i = 0;
+  size_t path_len;
+  size_t path_i = 0, newpath_i = 0;
   svn_boolean_t eating_slashes = FALSE;
 
   /* No PATH?  No problem. */
@@ -131,9 +138,9 @@ svn_fs__next_entry_name(const char **next_p,
 }
 
 svn_fs_path_change2_t *
-svn_fs__path_change2_create(const svn_fs_id_t *node_rev_id,
-                            svn_fs_path_change_kind_t change_kind,
-                            apr_pool_t *pool)
+svn_fs__path_change_create_internal(const svn_fs_id_t *node_rev_id,
+                                    svn_fs_path_change_kind_t change_kind,
+                                    apr_pool_t *pool)
 {
   svn_fs_path_change2_t *change;
 
@@ -142,4 +149,25 @@ svn_fs__path_change2_create(const svn_fs_id_t *node_rev_id,
   change->change_kind = change_kind;
 
   return change;
+}
+
+svn_error_t *
+svn_fs__append_to_merged_froms(svn_mergeinfo_t *output,
+                               svn_mergeinfo_t input,
+                               const char *rel_path,
+                               apr_pool_t *pool)
+{
+  apr_hash_index_t *hi;
+
+  *output = apr_hash_make(pool);
+  for (hi = apr_hash_first(pool, input); hi; hi = apr_hash_next(hi))
+    {
+      const char *path = svn__apr_hash_index_key(hi);
+      apr_array_header_t *rangelist = svn__apr_hash_index_val(hi);
+
+      apr_hash_set(*output, svn_fspath__join(path, rel_path, pool),
+                   APR_HASH_KEY_STRING, svn_rangelist_dup(rangelist, pool));
+    }
+
+  return SVN_NO_ERROR;
 }

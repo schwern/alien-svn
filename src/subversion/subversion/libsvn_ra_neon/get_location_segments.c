@@ -2,17 +2,22 @@
  * get_location_segments.c :   RA get-location-segments API implementation
  *
  * ====================================================================
- * Copyright (c) 2007-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -62,7 +67,7 @@ static const svn_ra_neon__xml_elm_t gls_report_elements[] =
   { NULL }
 };
 
-typedef struct {
+typedef struct get_location_segments_baton_t {
   svn_location_segment_receiver_t receiver;
   void *receiver_baton;
   apr_pool_t *subpool;
@@ -138,7 +143,8 @@ svn_ra_neon__get_location_segments(svn_ra_session_t *session,
   svn_stringbuf_t *request_body;
   svn_error_t *err;
   get_location_segments_baton_t request_baton;
-  svn_string_t bc_url, bc_relative;
+  const char *bc_url;
+  const char *bc_relative;
   const char *bc;
   int status_code = 0;
   apr_pool_t *subpool = svn_pool_create(pool);
@@ -186,10 +192,10 @@ svn_ra_neon__get_location_segments(svn_ra_session_t *session,
      it as the main argument to the REPORT request; it might cause
      dav_get_resource() to choke on the server.  So instead, we pass a
      baseline-collection URL, which we get from the PEG_REVISION.  */
-  SVN_ERR(svn_ra_neon__get_baseline_info(NULL, &bc_url, &bc_relative, NULL,
-                                         ras, ras->url->data,
-                                         peg_revision, subpool));
-  bc = svn_path_url_add_component(bc_url.data, bc_relative.data, subpool);
+  SVN_ERR(svn_ra_neon__get_baseline_info(&bc_url, &bc_relative, NULL, ras,
+                                         ras->url->data, peg_revision,
+                                         subpool));
+  bc = svn_path_url_add_component2(bc_url, bc_relative, subpool);
 
   err = svn_ra_neon__parsed_request(ras, "REPORT", bc,
                                     request_body->data, NULL, NULL,

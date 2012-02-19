@@ -2,17 +2,22 @@
  * mergeinfo.c :  routines for requesting and parsing mergeinfo reports
  *
  * ====================================================================
- * Copyright (c) 2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -111,12 +116,16 @@ end_element(void *baton, int state, const char *nspace, const char *elt_name)
       if (mb->curr_info && mb->curr_path)
         {
           svn_mergeinfo_t path_mergeinfo;
+          const char *path;
 
           SVN_ERR_ASSERT(mb->curr_path->data);
+          path = apr_pstrdup(mb->pool, mb->curr_path->data);
           SVN_ERR((mb->err = svn_mergeinfo_parse(&path_mergeinfo,
                                                  mb->curr_info->data,
                                                  mb->pool)));
-          apr_hash_set(mb->catalog, apr_pstrdup(mb->pool, mb->curr_path->data),
+          /* Correct for naughty servers that send "relative" paths
+             with leading slashes! */
+          apr_hash_set(mb->catalog, path[0] == '/' ? path + 1 : path,
                        APR_HASH_KEY_STRING, path_mergeinfo);
         }
     }
@@ -157,11 +166,11 @@ svn_ra_neon__get_mergeinfo(svn_ra_session_t *session,
                            svn_boolean_t include_descendants,
                            apr_pool_t *pool)
 {
-  int i, status_code;
   svn_ra_neon__session_t *ras = session->priv;
   svn_stringbuf_t *request_body = svn_stringbuf_create("", pool);
   struct mergeinfo_baton mb;
-  svn_string_t bc_url, bc_relative;
+  const char *bc_url;
+  const char *bc_relative;
   const char *final_bc_url;
 
   static const char minfo_report_head[] =
@@ -170,6 +179,8 @@ svn_ra_neon__get_mergeinfo(svn_ra_session_t *session,
 
   static const char minfo_report_tail[] =
     "</S:" SVN_DAV__MERGEINFO_REPORT ">" DEBUG_CR;
+
+  *catalog = NULL;
 
   /* Construct the request body. */
   svn_stringbuf_appendcstr(request_body, minfo_report_head);
@@ -193,6 +204,8 @@ svn_ra_neon__get_mergeinfo(svn_ra_session_t *session,
 
   if (paths)
     {
+      int i;
+
       for (i = 0; i < paths->nelts; i++)
         {
           const char *this_path =
@@ -217,11 +230,9 @@ svn_ra_neon__get_mergeinfo(svn_ra_session_t *session,
      it as the main argument to the REPORT request; it might cause
      dav_get_resource() to choke on the server.  So instead, we pass a
      baseline-collection URL, which we get from END. */
-  SVN_ERR(svn_ra_neon__get_baseline_info(NULL, &bc_url, &bc_relative, NULL,
-                                         ras, ras->url->data, revision,
-                                         pool));
-  final_bc_url = svn_path_url_add_component(bc_url.data, bc_relative.data,
-                                            pool);
+  SVN_ERR(svn_ra_neon__get_baseline_info(&bc_url, &bc_relative, NULL, ras,
+                                         ras->url->data, revision, pool));
+  final_bc_url = svn_path_url_add_component2(bc_url, bc_relative, pool);
 
   SVN_ERR(svn_ra_neon__parsed_request(ras,
                                       "REPORT",
@@ -233,11 +244,11 @@ svn_ra_neon__get_mergeinfo(svn_ra_session_t *session,
                                       end_element,
                                       &mb,
                                       NULL,
-                                      &status_code,
+                                      NULL,
                                       FALSE,
                                       pool));
 
-  if (mb.err == SVN_NO_ERROR)
+  if (mb.err == SVN_NO_ERROR && apr_hash_count(mb.catalog))
     *catalog = mb.catalog;
 
   return mb.err;

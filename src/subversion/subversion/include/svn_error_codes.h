@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -209,6 +214,16 @@ SVN_ERROR_START
              SVN_ERR_BAD_CATEGORY_START + 12,
              "Invalid character in hex checksum")
 
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_BAD_TOKEN,
+             SVN_ERR_BAD_CATEGORY_START + 13,
+             "Unknown string value of token")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_BAD_CHANGELIST_NAME,
+             SVN_ERR_BAD_CATEGORY_START + 14,
+             "Invalid changelist name")
+
   /* xml errors */
 
   SVN_ERRDEF(SVN_ERR_XML_ATTRIB_NOT_FOUND,
@@ -264,6 +279,11 @@ SVN_ERROR_START
              SVN_ERR_IO_CATEGORY_START + 6,
              "Write error")
 
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_IO_PIPE_WRITE_ERROR,
+             SVN_ERR_IO_CATEGORY_START + 7,
+             "Write error in pipe")
+
   /* stream errors */
 
   SVN_ERRDEF(SVN_ERR_STREAM_UNEXPECTED_EOF,
@@ -277,6 +297,11 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_STREAM_UNRECOGNIZED_DATA,
              SVN_ERR_STREAM_CATEGORY_START + 2,
              "Unrecognized stream data")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_STREAM_SEEK_NOT_SUPPORTED,
+             SVN_ERR_STREAM_CATEGORY_START + 3,
+             "Stream doesn't support seeking")
 
   /* node errors */
 
@@ -350,8 +375,16 @@ SVN_ERROR_START
              SVN_ERR_WC_CATEGORY_START + 6,
              "Invalid lock")
 
-  SVN_ERRDEF(SVN_ERR_WC_NOT_DIRECTORY,
+  /** @since New in 1.7. Previously this error number was used by
+   * #SVN_ERR_WC_NOT_DIRECTORY, which is now an alias for this error. */
+  SVN_ERRDEF(SVN_ERR_WC_NOT_WORKING_COPY,
              SVN_ERR_WC_CATEGORY_START + 7,
+             "Path is not a working copy directory")
+
+  /** @deprecated Provided for backward compatibility with the 1.6 API.
+   * Use #SVN_ERR_WC_NOT_WORKING_COPY. */
+  SVN_ERRDEF(SVN_ERR_WC_NOT_DIRECTORY,
+             SVN_ERR_WC_NOT_WORKING_COPY,
              "Path is not a working copy directory")
 
   SVN_ERRDEF(SVN_ERR_WC_NOT_FILE,
@@ -443,7 +476,10 @@ SVN_ERROR_START
              SVN_ERR_WC_CATEGORY_START + 28,
              "Failed to locate 'copyfrom' path in working copy")
 
-  /** @since New in 1.5. */
+  /** @since New in 1.5.
+   * @deprecated Provided for backward compatibility with the 1.6 API.
+   * This event is not an error, and is now reported
+   * via the standard notification mechanism instead. */
   SVN_ERRDEF(SVN_ERR_WC_CHANGELIST_MOVE,
              SVN_ERR_WC_CATEGORY_START + 29,
              "Moving a path from one changelist to another")
@@ -457,6 +493,47 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_WC_CANNOT_MOVE_FILE_EXTERNAL,
              SVN_ERR_WC_CATEGORY_START + 31,
              "Cannot move a file external")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_DB_ERROR,
+             SVN_ERR_WC_CATEGORY_START + 32,
+             "Something's amiss with the wc sqlite database")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_MISSING,
+             SVN_ERR_WC_CATEGORY_START + 33,
+             "The working copy is missing")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_NOT_SYMLINK,
+             SVN_ERR_WC_CATEGORY_START + 34,
+             "The specified node is not a symlink")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_PATH_UNEXPECTED_STATUS,
+             SVN_ERR_WC_CATEGORY_START + 35,
+             "The specified path has an unexpected status")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_UPGRADE_REQUIRED,
+             SVN_ERR_WC_CATEGORY_START + 36,
+             "The working copy needs to be upgraded")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_CLEANUP_REQUIRED,
+             SVN_ERR_WC_CATEGORY_START + 37,
+             "Previous operation has not finished; "
+             "run 'cleanup' if it was interrupted")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_INVALID_OPERATION_DEPTH,
+             SVN_ERR_WC_CATEGORY_START + 38,
+             "The operation can not be performed with the specified depth")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_WC_PATH_ACCESS_DENIED,
+             SVN_ERR_WC_CATEGORY_START + 39,
+             "Couldn't open a working copy file because access was denied")
 
   /* fs errors */
 
@@ -679,6 +756,12 @@ SVN_ERROR_START
              SVN_ERR_FS_CATEGORY_START + 48,
              "Filesystem has no such checksum-representation index record")
 
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_FS_PROP_BASEVALUE_MISMATCH,
+             SVN_ERR_FS_CATEGORY_START + 49,
+             "Property value in filesystem differs from the provided "
+             "base value")
+
   /* repos errors */
 
   SVN_ERRDEF(SVN_ERR_REPOS_LOCKED,
@@ -783,6 +866,11 @@ SVN_ERROR_START
              SVN_ERR_RA_CATEGORY_START + 10,
              "Repository root URL does not match expected root URL")
 
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_RA_SESSION_URL_MISMATCH,
+             SVN_ERR_RA_CATEGORY_START + 11,
+             "Session URL does not match expected session URL")
+
   /* ra_dav errors */
 
   SVN_ERRDEF(SVN_ERR_RA_DAV_SOCK_INIT,
@@ -842,7 +930,10 @@ SVN_ERROR_START
              SVN_ERR_RA_DAV_CATEGORY_START + 11,
              "Repository has been moved")
 
-  /* SVN_ERR_RA_DAV_CATEGORY_START + 12 is reserved for use in 1.7. */
+  /** @since New in 1.7 */
+  SVN_ERRDEF(SVN_ERR_RA_DAV_CONN_TIMEOUT,
+             SVN_ERR_RA_DAV_CATEGORY_START + 12,
+             "Connection timed out")
 
   /** @since New in 1.6 */
   SVN_ERRDEF(SVN_ERR_RA_DAV_FORBIDDEN,
@@ -893,6 +984,11 @@ SVN_ERROR_START
              SVN_ERR_RA_SVN_CATEGORY_START + 7,
              "Cannot negotiate authentication mechanism")
 
+  /** @since New in 1.7  */
+  SVN_ERRDEF(SVN_ERR_RA_SVN_EDIT_ABORTED,
+             SVN_ERR_RA_SVN_CATEGORY_START + 8,
+             "Editor drive was aborted")
+
   /* libsvn_ra_serf errors */
   /** @since New in 1.5. */
   SVN_ERRDEF(SVN_ERR_RA_SERF_SSPI_INITIALISATION_FAILED,
@@ -902,6 +998,15 @@ SVN_ERROR_START
   SVN_ERRDEF(SVN_ERR_RA_SERF_SSL_CERT_UNTRUSTED,
              SVN_ERR_RA_SERF_CATEGORY_START + 1,
              "Server SSL certificate untrusted")
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_RA_SERF_GSSAPI_INITIALISATION_FAILED,
+             SVN_ERR_RA_SERF_CATEGORY_START + 2,
+             "Initialization of the GSSAPI context failed")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_RA_SERF_WRAPPED_ERROR,
+             SVN_ERR_RA_SERF_CATEGORY_START + 3,
+             "While handling serf response:")
 
   /* libsvn_auth errors */
 
@@ -1089,6 +1194,36 @@ SVN_ERROR_START
              SVN_ERR_CLIENT_CATEGORY_START + 17,
              "A file external cannot overwrite an existing versioned item")
 
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_CLIENT_PATCH_BAD_STRIP_COUNT,
+             SVN_ERR_CLIENT_CATEGORY_START + 18,
+             "Invalid path component strip count specified")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_CLIENT_CYCLE_DETECTED,
+             SVN_ERR_CLIENT_CATEGORY_START + 19,
+             "Detected a cycle while processing the operation")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_CLIENT_MERGE_UPDATE_REQUIRED,
+             SVN_ERR_CLIENT_CATEGORY_START + 20,
+             "Working copy and merge source not ready for reintegration")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_CLIENT_INVALID_MERGEINFO_NO_MERGETRACKING,
+             SVN_ERR_CLIENT_CATEGORY_START + 21,
+             "Invalid mergeinfo detected in merge target")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_CLIENT_NO_LOCK_TOKEN,
+             SVN_ERR_CLIENT_CATEGORY_START + 22,
+             "Can't perform this operation without a valid lock token")
+
+/** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_CLIENT_FORBIDDEN_BY_SERVER,
+             SVN_ERR_CLIENT_CATEGORY_START + 23,
+             "The operation is forbidden by the server")
+
   /* misc errors */
 
   SVN_ERRDEF(SVN_ERR_BASE,
@@ -1237,6 +1372,22 @@ SVN_ERROR_START
              SVN_ERR_MISC_CATEGORY_START + 32,
              "Unsupported schema found in SQLite db")
 
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_SQLITE_BUSY,
+             SVN_ERR_MISC_CATEGORY_START + 33,
+             "The SQLite db is busy")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_SQLITE_RESETTING_FOR_ROLLBACK,
+             SVN_ERR_MISC_CATEGORY_START + 34,
+             "SQLite busy at transaction rollback; "
+             "resetting all busy SQLite statements to allow rollback")
+
+  /** @since New in 1.7. */
+  SVN_ERRDEF(SVN_ERR_SQLITE_CONSTRAINT,
+             SVN_ERR_MISC_CATEGORY_START + 35,
+             "Constraint error in SQLite db")
+
   /* command-line client errors */
 
   SVN_ERRDEF(SVN_ERR_CL_ARG_PARSING_ERROR,
@@ -1283,11 +1434,19 @@ SVN_ERROR_START
              SVN_ERR_CL_CATEGORY_START + 10,
              "No external merge tool available")
 
+  SVN_ERRDEF(SVN_ERR_CL_ERROR_PROCESSING_EXTERNALS,
+             SVN_ERR_CL_CATEGORY_START + 11,
+             "Failed processing one or more externals definitions")
+
   /* malfunctions such as assertion failures */
 
   SVN_ERRDEF(SVN_ERR_ASSERTION_FAIL,
              SVN_ERR_MALFUNC_CATEGORY_START + 0,
              "Assertion failure")
+
+  SVN_ERRDEF(SVN_ERR_ASSERTION_ONLY_TRACING_LINKS,
+             SVN_ERR_MALFUNC_CATEGORY_START + 1,
+             "No non-tracing links found in the error chain")
 
 SVN_ERROR_END
 

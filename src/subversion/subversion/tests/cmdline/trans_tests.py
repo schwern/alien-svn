@@ -3,17 +3,25 @@
 #  trans_tests.py:  testing eol conversion and keyword substitution
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2006, 2008-2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -24,8 +32,12 @@ import svntest
 from svntest import wc
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-XFail = svntest.testcase.XFail
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
 Item = svntest.wc.StateItem
 
 
@@ -175,7 +187,7 @@ def setup_working_copy(wc_dir, value_len):
 ### Helper functions for setting/removing properties
 
 # Set the property keyword for PATH.  Turn on all possible keywords.
-# ### todo: Later, take list of keywords to set.
+### todo: Later, take list of keywords to set.
 def keywords_on(path):
   svntest.actions.run_and_verify_svn(None, None, [], 'propset',
                                      "svn:keywords",
@@ -183,7 +195,7 @@ def keywords_on(path):
                                      path)
 
 # Delete property NAME from versioned PATH in the working copy.
-# ### todo: Later, take list of keywords to remove from the propval?
+### todo: Later, take list of keywords to remove from the propval?
 def keywords_off(path):
   svntest.actions.run_and_verify_svn(None, None, [], 'propdel',
                                      "svn:keywords", path)
@@ -328,7 +340,7 @@ def keywords_from_birth(sbox):
   fp = open(header_unexp_path, 'r')
   lines = fp.readlines()
   if not ((len(lines) == 1)
-          and (re.match("\$Header: (http|file|svn|svn\\+ssh)://.* jrandom",
+          and (re.match("\$Header: (https?|file|svn|svn\\+ssh)://.* jrandom",
                         lines[0]))):
     print("Header expansion failed for %s" % header_unexp_path)
     raise svntest.Failure
@@ -338,7 +350,7 @@ def keywords_from_birth(sbox):
   fp = open(header_exp_path, 'r')
   lines = fp.readlines()
   if not ((len(lines) == 1)
-          and (re.match("\$Header: (http|file|svn|svn\\+ssh)://.* jrandom",
+          and (re.match("\$Header: (https?|file|svn|svn\\+ssh)://.* jrandom",
                         lines[0]))):
     print("Header expansion failed for %s" % header_exp_path)
     raise svntest.Failure
@@ -379,8 +391,7 @@ def keywords_from_birth(sbox):
     '$URL::x%sx$\n' % (' ' * len(url_expand_test_data))
     ]
 
-  fp = open(os.path.join(wc_dir, svntest.main.get_admin_name(),
-                         'text-base', 'fixed_length_keywords.svn-base'), 'r')
+  fp = open(svntest.wc.text_base_path(fixed_length_keywords_path), 'r')
   actual_textbase_kw = fp.readlines()
   fp.close()
   check_keywords(actual_textbase_kw, kw_textbase, "text base")
@@ -439,6 +450,7 @@ def keywords_from_birth(sbox):
 def do_nothing(x, y):
   return 0
 
+@Issue(631)
 def update_modified_with_translation(sbox):
   "update modified file with eol-style 'native'"
 
@@ -527,7 +539,7 @@ def update_modified_with_translation(sbox):
 # contents are transmitted to the server during commit, and b) that
 # after the commit, the file and its text-base have been changed to
 # have the new line-ending style.
-
+@Issue(1085)
 def eol_change_is_text_mod(sbox):
   "committing eol-style change forces text send"
 
@@ -565,7 +577,7 @@ def eol_change_is_text_mod(sbox):
                                      'ci', '-m', 'log msg', foo_path)
 
   # check 2: do the files have the right contents now?
-  contents = svntest.main.file_read(foo_path, 'rb')
+  contents = open(foo_path, 'rb').read()
   if svntest.main.windows:
     if contents != "1\n2\n3\n4\n5\n6\n7\n8\n9\n":
       raise svntest.Failure
@@ -573,16 +585,15 @@ def eol_change_is_text_mod(sbox):
     if contents != "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n":
       raise svntest.Failure
 
-  foo_base_path = os.path.join(wc_dir, svntest.main.get_admin_name(),
-                               'text-base', 'foo.svn-base')
-  base_contents = svntest.main.file_read(foo_base_path, 'rb')
+  foo_base_path = svntest.wc.text_base_path(foo_path)
+  base_contents = open(foo_base_path, 'rb').read()
   if contents != base_contents:
     raise svntest.Failure
 
 #----------------------------------------------------------------------
 # Regression test for issue #1151.  A single file in a directory
 # didn't get keywords expanded on checkout.
-
+@Issue(1151)
 def keyword_expanded_on_checkout(sbox):
   "keyword expansion for lone file in directory"
 
@@ -751,7 +762,7 @@ def propset_commit_checkout_nocrash(sbox):
                                      sbox.repo_url,
                                      other_wc_dir)
 
-  mu_other_contents = svntest.main.file_read(mu_other_path)
+  mu_other_contents = open(mu_other_path).read()
   if mu_other_contents != "This is the file 'mu'.\n$Rev: 3 $":
     print("'%s' does not have the expected contents" % mu_other_path)
     raise svntest.Failure
@@ -782,6 +793,95 @@ def propset_revert_noerror(sbox):
   svntest.actions.run_and_verify_status(wc_dir, expected_status)
 
 
+def props_only_file_update(sbox):
+  "retranslation occurs on a props-only update"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  iota_path = os.path.join(wc_dir, 'iota')
+  content = ["This is the file 'iota'.\n",
+             "$Author$\n",
+             ]
+  content_expanded = ["This is the file 'iota'.\n",
+                      "$Author: jrandom $\n",
+                      ]
+
+  # Create r2 with iota's contents and svn:keywords modified
+  open(iota_path, 'w').writelines(content)
+  svntest.main.run_svn(None, 'propset', 'svn:keywords', 'Author', iota_path)
+
+  expected_output = wc.State(wc_dir, {
+    'iota' : Item(verb='Sending'),
+    })
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 1)
+  expected_status.tweak('iota', wc_rev=2)
+
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        expected_output,
+                                        expected_status,
+                                        None,
+                                        wc_dir)
+
+  # Create r3 that drops svn:keywords
+
+  # put the content back to its untranslated form
+  open(iota_path, 'w').writelines(content)
+
+  svntest.main.run_svn(None, 'propdel', 'svn:keywords', iota_path)
+
+  expected_status.tweak('iota', wc_rev=3)
+
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        expected_output,
+                                        expected_status,
+                                        None,
+                                        wc_dir)
+
+  # Now, go back to r2. iota should have the Author keyword expanded.
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.tweak('iota', contents=''.join(content_expanded))
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 2)
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        None, None, expected_status,
+                                        None,
+                                        None, None, None, None,
+                                        False,
+                                        wc_dir, '-r', '2')
+
+  if open(iota_path).read() != ''.join(content_expanded):
+    raise svntest.Failure("$Author$ is not expanded in 'iota'")
+
+  # Update to r3. this should retranslate iota, dropping the keyword expansion
+  expected_disk = svntest.main.greek_state.copy()
+  expected_disk.tweak('iota', contents=''.join(content))
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 3)
+
+  svntest.actions.run_and_verify_update(wc_dir,
+                                        None, expected_disk, expected_status,
+                                        None,
+                                        None, None, None, None,
+                                        False,
+                                        wc_dir)
+
+  if open(iota_path).read() != ''.join(content):
+    raise svntest.Failure("$Author$ is not contracted in 'iota'")
+
+  # We used to leave some temporary files around. Make sure that we don't.
+  temps = os.listdir(os.path.join(wc_dir, svntest.main.get_admin_name(), 'tmp'))
+  if os.path.exists(os.path.join(wc_dir, svntest.main.get_admin_name(),
+                                 'tmp', 'props')):
+    temps.remove('prop-base')
+    temps.remove('props')
+  if temps:
+    print('Temporary files leftover: %s' % (', '.join(temps),))
+    raise svntest.Failure
+
+
 ########################################################################
 # Run the tests
 
@@ -799,6 +899,7 @@ test_list = [ None,
               copy_propset_commit,
               propset_commit_checkout_nocrash,
               propset_revert_noerror,
+              props_only_file_update,
              ]
 
 if __name__ == '__main__':

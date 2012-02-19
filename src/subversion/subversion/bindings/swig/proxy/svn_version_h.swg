@@ -25,7 +25,6 @@
 
 /* Structure definitions */
 #ifdef SWIGPYTHON
-%proxy(svn_version_t);
 %proxy(svn_version_checklist_t);
 #endif
 

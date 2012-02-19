@@ -3,17 +3,25 @@
 #  changelist_tests.py:  testing changelist uses.
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2008-2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -23,9 +31,12 @@ import string, sys, os, re
 import svntest
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-SkipUnless = svntest.testcase.SkipUnless
-XFail = svntest.testcase.XFail
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
 Item = svntest.wc.StateItem
 
 
@@ -37,16 +48,12 @@ def mod_all_files(wc_dir, new_text):
   """Walk over working copy WC_DIR, appending NEW_TEXT to all the
   files in that tree (but not inside the .svn areas of that tree)."""
 
-  def tweak_files(new_text, dirname, names):
-    if os.path.basename(dirname) == ".svn":
-      del names[:]
-    else:
-      for name in names:
-        full_path = os.path.join(dirname, name)
-        if os.path.isfile(full_path):
-          svntest.main.file_append(full_path, new_text)
-
-  os.path.walk(wc_dir, tweak_files, new_text)
+  dot_svn = svntest.main.get_admin_name()
+  for dirpath, dirs, files in os.walk(wc_dir):
+    if dot_svn in dirs:
+      dirs.remove(dot_svn)
+    for name in files:
+      svntest.main.file_append(os.path.join(dirpath, name), new_text)
 
 def changelist_all_files(wc_dir, name_func):
   """Walk over working copy WC_DIR, adding versioned files to
@@ -54,20 +61,17 @@ def changelist_all_files(wc_dir, name_func):
   noting its string return value (or None, if we wish to remove the
   file from a changelist)."""
 
-  def do_changelist(name_func, dirname, names):
-    if os.path.basename(dirname) == ".svn":
-      del names[:]
-    else:
-      for name in names:
-        full_path = os.path.join(dirname, name)
-        if os.path.isfile(full_path):
-          clname = name_func(full_path)
-          if not clname:
-            svntest.main.run_svn(None, "changelist", "--remove", full_path)
-          else:
-            svntest.main.run_svn(None, "changelist", clname, full_path)
-
-  os.path.walk(wc_dir, do_changelist, name_func)
+  dot_svn = svntest.main.get_admin_name()
+  for dirpath, dirs, files in os.walk(wc_dir):
+    if dot_svn in dirs:
+      dirs.remove(dot_svn)
+    for name in files:
+        full_path = os.path.join(dirpath, name)
+        clname = name_func(full_path)
+        if not clname:
+          svntest.main.run_svn(None, "changelist", "--remove", full_path)
+        else:
+          svntest.main.run_svn(None, "changelist", clname, full_path)
 
 def clname_from_lastchar_cb(full_path):
   """Callback for changelist_all_files() that returns a changelist
@@ -99,9 +103,10 @@ def clname_from_lastchar_cb(full_path):
 
 
 # Regular expressions for 'svn changelist' output.
+_re_cl_rem_pattern = "^D \[(.*)\] (.*)"
 _re_cl_skip = re.compile("Skipped '(.*)'")
-_re_cl_add  = re.compile("Path '(.*)' is now a member of changelist '(.*)'.")
-_re_cl_rem  = re.compile("Path '(.*)' is no longer a member of a changelist.")
+_re_cl_add  = re.compile("^A \[(.*)\] (.*)")
+_re_cl_rem  = re.compile(_re_cl_rem_pattern)
 
 def verify_changelist_output(output, expected_adds=None,
                              expected_removals=None,
@@ -132,21 +137,21 @@ def verify_changelist_output(output, expected_adds=None,
     match = _re_cl_rem.match(line)
     if match \
        and expected_removals \
-       and match.group(1) in expected_removals:
+       and match.group(2) in expected_removals:
         continue
     elif match:
       raise svntest.Failure("Unexpected changelist removal line: " + line)
     match = _re_cl_add.match(line)
     if match \
        and expected_adds \
-       and expected_adds.get(match.group(1)) == match.group(2):
+       and expected_adds.get(match.group(2)) == match.group(1):
         continue
     elif match:
       raise svntest.Failure("Unexpected changelist add line: " + line)
     match = _re_cl_skip.match(line)
     if match \
        and expected_skips \
-       and match.group(1) in expected_skips:
+       and match.group(2) in expected_skips:
         continue
     elif match:
       raise svntest.Failure("Unexpected changelist skip line: " + line)
@@ -165,7 +170,10 @@ def verify_pget_output(output, expected_props):
       raise svntest.Failure("Unexpected output line: " + line)
     actual_props[path] = prop
   if expected_props != actual_props:
-    raise svntest.Failure("Got unexpected property results")
+    raise svntest.Failure("Got unexpected property results\n"
+                          "\tExpected: %s\n"
+                          "\tActual: %s" % (str(expected_props),
+                                            str(actual_props)))
 
 
 ######################################################################
@@ -276,7 +284,8 @@ def add_remove_changelists(sbox):
     os.path.join(wc_dir, 'A', 'D', 'H', 'psi') : 'bar',
     os.path.join(wc_dir, 'A', 'D', 'gamma') : 'bar',
     }
-  verify_changelist_output(output, expected_adds)
+  expected_removals = expected_adds
+  verify_changelist_output(output, expected_adds, expected_removals)
 
   # svn changelist baz WC_DIR/A/D/H --depth infinity
   exit_code, output, errput = svntest.main.run_svn(".*", "changelist", "baz",
@@ -288,7 +297,8 @@ def add_remove_changelists(sbox):
     os.path.join(wc_dir, 'A', 'D', 'H', 'omega') : 'baz',
     os.path.join(wc_dir, 'A', 'D', 'H', 'psi') : 'baz',
     }
-  verify_changelist_output(output, expected_adds)
+  expected_removals = expected_adds
+  verify_changelist_output(output, expected_adds, expected_removals)
 
   ### Now, let's selectively rename some changelists ###
 
@@ -305,7 +315,8 @@ def add_remove_changelists(sbox):
     os.path.join(wc_dir, 'A', 'mu') : 'foo-rename',
     os.path.join(wc_dir, 'iota') : 'foo-rename',
     }
-  verify_changelist_output(output, expected_adds)
+  expected_removals = expected_adds
+  verify_changelist_output(output, expected_adds, expected_removals)
 
   # svn changelist bar WC_DIR --depth infinity
   #     --changelist foo-rename --changelist baz
@@ -323,7 +334,8 @@ def add_remove_changelists(sbox):
     os.path.join(wc_dir, 'A', 'mu') : 'bar',
     os.path.join(wc_dir, 'iota') : 'bar',
     }
-  verify_changelist_output(output, expected_adds)
+  expected_removals = expected_adds
+  verify_changelist_output(output, expected_adds, expected_removals)
 
   ### Okay.  Time to remove some stuff from changelists now. ###
 
@@ -524,10 +536,7 @@ def info_with_changelists(sbox):
 
       # Filter the output for lines that begin with 'Path:', and
       # reduce even those lines to just the actual path.
-      def startswith_path(line):
-        return line[:6] == 'Path: ' and 1 or 0
-      paths = [x[6:].rstrip() for x in filter(startswith_path, output)]
-      paths.sort()
+      paths = sorted([x[6:].rstrip() for x in output if x[:6] == 'Path: '])
 
       # And, compare!
       if (paths != expected_paths):
@@ -592,10 +601,7 @@ def diff_with_changelists(sbox):
 
         # Filter the output for lines that begin with 'Index:', and
         # reduce even those lines to just the actual path.
-        def startswith_path(line):
-          return line[:7] == 'Index: ' and 1 or 0
-        paths = [x[7:].rstrip() for x in filter(startswith_path, output)]
-        paths.sort()
+        paths = sorted([x[7:].rstrip() for x in output if x[:7] == 'Index: '])
 
         # Diff output on Win32 uses '/' path separators.
         if sys.platform == 'win32':
@@ -610,7 +616,7 @@ def diff_with_changelists(sbox):
 #----------------------------------------------------------------------
 
 def propmods_with_changelists(sbox):
-  "propset/del/get --changelist"
+  "propset/del/get/list --changelist"
 
   sbox.build()
   wc_dir = sbox.wc_dir
@@ -631,6 +637,16 @@ def propmods_with_changelists(sbox):
   actual_disk_tree = svntest.tree.build_tree_from_wc(wc_dir, 1)
   svntest.tree.compare_trees("disk", actual_disk_tree,
                              expected_disk.old_tree())
+
+  # Proplist the 'i' changelist
+  exit_code, output, errput = svntest.main.run_svn(None, "proplist", "--depth",
+                                                   "infinity", "--changelist",
+                                                   "i", wc_dir)
+  ### Really simple sanity check on the output of 'proplist'.  If we've got
+  ### a proper proplist content checker anywhere, we should probably use it
+  ### instead.
+  if len(output) != 6:
+    raise svntest.Failure
 
   # Remove the 'name' property from files in the 'o' and 'i' changelists.
   svntest.main.run_svn(None, "pdel", "--depth", "infinity",
@@ -857,6 +873,323 @@ def update_with_changelists(sbox):
                                         "--depth", "infinity",
                                         wc_dir)
 
+def tree_conflicts_and_changelists_on_commit1(sbox):
+  "tree conflicts, changelists and commit"
+  svntest.actions.build_greek_tree_conflicts(sbox)
+  wc_dir = sbox.wc_dir
+
+  iota = os.path.join(wc_dir, "iota")
+  rho = os.path.join(wc_dir, "A", "D", "G", "rho")
+
+  # This file will ultimately be committed
+  svntest.main.file_append(iota, "More stuff in iota")
+
+  # Verify that the commit is blocked when we include a tree-conflicted
+  # item.
+  svntest.main.run_svn(None, "changelist", "list", iota, rho)
+
+  expected_error = ("svn: E155015: Aborting commit: '.*" + re.escape(rho)
+                    + "' remains in .*conflict")
+
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        None, None,
+                                        expected_error,
+                                        wc_dir,
+                                        "--changelist",
+                                        "list")
+
+  # Now, test if we can commit iota without those tree-conflicts
+  # getting in the way.
+  svntest.main.run_svn(None, "changelist", "--remove", rho)
+
+  expected_output = svntest.wc.State(wc_dir, {
+    'iota' : Item(verb='Sending'),
+    })
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 2)
+  expected_status.tweak('A/D/G/pi', status='D ', treeconflict='C')
+  expected_status.tweak('A/D/G/tau', status='! ', treeconflict='C',
+                        wc_rev=None)
+  expected_status.tweak('A/D/G/rho', status='A ', copied='+',
+                        treeconflict='C', wc_rev='-')
+  expected_status.tweak('iota', wc_rev=3, status='  ')
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        expected_output,
+                                        expected_status,
+                                        None,
+                                        wc_dir,
+                                        "--changelist",
+                                        "list")
+
+
+def tree_conflicts_and_changelists_on_commit2(sbox):
+  "more tree conflicts, changelists and commit"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+
+  iota = os.path.join(wc_dir, "iota")
+  A = os.path.join(wc_dir, "A",)
+  C = os.path.join(A, "C")
+
+  # Make a tree-conflict on A/C:
+  # Remove it, warp back, add a prop, update.
+  svntest.main.run_svn(None, 'delete', C)
+
+  expected_output = svntest.verify.UnorderedRegexOutput(
+                                     ["Deleting.*" + re.escape(C)],
+                                     False)
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'commit', '-m', 'delete A/C', C)
+
+  expected_output = svntest.verify.UnorderedRegexOutput(
+                                     "A.*" + re.escape(C), False)
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'update', C, "-r1")
+
+  expected_output = svntest.verify.UnorderedRegexOutput(
+                                     ".*'propname' set on '"
+                                     + re.escape(C) + "'", False)
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'propset', 'propname', 'propval', C)
+
+  expected_output = svntest.verify.UnorderedRegexOutput(
+                                     "   C " + re.escape(C), False)
+  svntest.actions.run_and_verify_svn(None, expected_output, [],
+                                     'update', wc_dir)
+
+
+  expected_status = svntest.actions.get_virginal_state(wc_dir, 2)
+  expected_status.tweak('A/C', status='A ', copied='+',
+                        treeconflict='C', wc_rev='-')
+
+  svntest.actions.run_and_verify_status(wc_dir, expected_status)
+
+  # So far so good. We have a tree-conflict on an absent dir A/C.
+
+  # Verify that the current situation does not commit.
+  expected_error = "svn: E155015: Aborting commit:.* remains in .*conflict";
+
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        None, None,
+                                        expected_error,
+                                        wc_dir)
+
+  # Now try to commit with a changelist, not letting the
+  # tree-conflict get in the way.
+  svntest.main.file_append(iota, "More stuff in iota")
+  svntest.main.run_svn(None, "changelist", "list", iota)
+
+  expected_output = svntest.wc.State(wc_dir, {
+    'iota' : Item(verb='Sending'),
+    })
+
+  expected_status.tweak('iota', wc_rev=3, status='  ')
+
+  svntest.actions.run_and_verify_commit(wc_dir,
+                                        expected_output,
+                                        expected_status,
+                                        None,
+                                        wc_dir,
+                                        "--changelist",
+                                        "list")
+
+
+#----------------------------------------------------------------------
+
+def move_keeps_changelist(sbox):
+  "'svn mv' of existing keeps the changelist"
+
+  sbox.build(read_only = True)
+  wc_dir = sbox.wc_dir
+  iota_path  = os.path.join(wc_dir, 'iota')
+  iota2_path = iota_path + '2'
+
+  # 'svn mv' of existing file should *copy* the changelist to the new place
+  svntest.main.run_svn(None, "changelist", 'foo', iota_path)
+  svntest.main.run_svn(None, "rename", iota_path, iota2_path)
+  expected_infos = [
+    {
+      'Name' : 'iota',
+      'Schedule' : 'delete',
+      'Changelist' : 'foo',
+    },
+    {
+      'Name' : 'iota2',
+      'Schedule' : 'add',
+      'Changelist' : 'foo',  # this line fails the test
+    },
+  ]
+  svntest.actions.run_and_verify_info(expected_infos, iota_path, iota2_path)
+
+def move_added_keeps_changelist(sbox):
+  "'svn mv' of added keeps the changelist"
+  sbox.build(read_only = True)
+  wc_dir = sbox.wc_dir
+  repo_url = sbox.repo_url
+
+  kappa_path  = os.path.join(wc_dir, 'kappa')
+  kappa2_path = kappa_path + '2'
+
+  # add 'kappa' (do not commit!)
+  svntest.main.file_write(kappa_path, "This is the file 'kappa'.\n")
+  svntest.main.run_svn(None, 'add', kappa_path)
+
+  # 'svn mv' of added file should *move* the changelist to the new place
+  svntest.main.run_svn(None, "changelist", 'foo', kappa_path)
+  svntest.main.run_svn(None, "rename", kappa_path, kappa2_path)
+
+  # kappa not under version control
+  svntest.actions.run_and_verify_svnversion(None, kappa_path, repo_url,
+                                            [], ".*doesn't exist.*")
+  # kappa2 in a changelist
+  expected_infos = [
+    {
+      'Name' : 'kappa2',
+      'Schedule' : 'add',
+      'Changelist' : 'foo',  # this line fails the test
+    },
+  ]
+  svntest.actions.run_and_verify_info(expected_infos, kappa2_path)
+
+@Issue(3820)
+def change_to_dir(sbox):
+  "change file in changelist to dir"
+
+  sbox.build()
+
+  # No changelist initially
+  expected_infos = [{'Name' : 'mu', 'Changelist' : None}]
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu visible in changelist
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'changelist', 'qq', sbox.ospath('A/mu'))
+  expected_infos = [{'Name' : 'mu', 'Changelist' : 'qq'}]
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu still visible after delete
+  svntest.actions.run_and_verify_svn(None, None, [], 'rm', sbox.ospath('A/mu'))
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu removed from changelist after replace with directory
+  svntest.actions.run_and_verify_svn(None, '^A|' + _re_cl_rem_pattern, [],
+                                     'mkdir', sbox.ospath('A/mu'))
+  expected_infos = [{'Changelist' : None}] # No Name for directories?
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  svntest.main.run_svn(None, "commit", "-m", "r2: replace A/mu: file->dir",
+                       sbox.ospath('A'))
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  svntest.main.run_svn(None, "update", "-r", "1", sbox.ospath('A'))
+  expected_infos = [{'Name' : 'mu', 'Changelist' : None}]
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu visible in changelist
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'changelist', 'qq', sbox.ospath('A/mu'))
+  expected_infos = [{'Name' : 'mu', 'Changelist' : 'qq'}]
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu removed from changelist after replace with dir via merge
+  svntest.main.run_svn(None, "merge", "-c", "2", sbox.ospath('A'),
+                       sbox.ospath('A'))
+  expected_infos = [{'Changelist' : None}] # No Name for directories?
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+
+@Issue(3822)
+def revert_deleted_in_changelist(sbox):
+  "revert a deleted file in a changelist"
+
+  sbox.build(read_only = True)
+
+  # No changelist initially
+  expected_infos = [{'Name' : 'mu', 'Changelist' : None}]
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu visible in changelist
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'changelist', 'qq', sbox.ospath('A/mu'))
+  expected_infos = [{'Name' : 'mu', 'Changelist' : 'qq'}]
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu still visible after delete
+  svntest.actions.run_and_verify_svn(None, None, [], 'rm', sbox.ospath('A/mu'))
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu still visible after revert
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'revert', sbox.ospath('A/mu'))
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu still visible after parent delete
+  svntest.actions.run_and_verify_svn(None, None, [], 'rm', sbox.ospath('A'))
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+  # A/mu still visible after revert
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'revert', '-R', sbox.ospath('A'))
+  svntest.actions.run_and_verify_info(expected_infos, sbox.ospath('A/mu'))
+
+def add_remove_non_existent_target(sbox):
+  "add and remove non-existent target to changelist"
+
+  sbox.build(read_only = True)
+  wc_dir = sbox.wc_dir
+  bogus_path = os.path.join(wc_dir, 'A', 'bogus')
+
+  expected_err = "svn: warning: W155010: The node '" + \
+                 re.escape(os.path.abspath(bogus_path)) + \
+                 "' was not found"
+
+  svntest.actions.run_and_verify_svn(None, None, expected_err,
+                                     'changelist', 'testlist',
+                                     bogus_path)
+
+  svntest.actions.run_and_verify_svn(None, None, expected_err,
+                                     'changelist', bogus_path,
+                                      '--remove')
+
+def add_remove_unversioned_target(sbox):
+  "add and remove unversioned target to changelist"
+
+  sbox.build(read_only = True)
+  unversioned = sbox.ospath('unversioned')
+  svntest.main.file_write(unversioned, "dummy contents", 'w+')
+
+  expected_err = "svn: warning: W155010: The node '" + \
+                 re.escape(os.path.abspath(unversioned)) + \
+                 "' was not found"
+
+  svntest.actions.run_and_verify_svn(None, None, expected_err,
+                                     'changelist', 'testlist',
+                                     unversioned)
+
+  svntest.actions.run_and_verify_svn(None, None, expected_err,
+                                     'changelist', unversioned,
+                                      '--remove')
+
+@Issue(3985)
+def readd_after_revert(sbox):
+  "add new file to changelist, revert and readd"
+  sbox.build(read_only = True)
+
+  dummy = sbox.ospath('dummy')
+  svntest.main.file_write(dummy, "dummy contents")
+
+  sbox.simple_add('dummy')
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'changelist', 'testlist',
+                                     dummy)
+
+  sbox.simple_revert('dummy')
+
+  svntest.main.file_write(dummy, "dummy contents")
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'add', dummy)
+
 
 ########################################################################
 # Run the tests
@@ -871,6 +1204,15 @@ test_list = [ None,
               propmods_with_changelists,
               revert_with_changelists,
               update_with_changelists,
+              tree_conflicts_and_changelists_on_commit1,
+              tree_conflicts_and_changelists_on_commit2,
+              move_keeps_changelist,
+              move_added_keeps_changelist,
+              change_to_dir,
+              revert_deleted_in_changelist,
+              add_remove_non_existent_target,
+              add_remove_unversioned_target,
+              readd_after_revert,
              ]
 
 if __name__ == '__main__':

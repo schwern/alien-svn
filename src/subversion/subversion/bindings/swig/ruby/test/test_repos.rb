@@ -1,3 +1,22 @@
+# ====================================================================
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
+# ====================================================================
+
 require "tempfile"
 
 require "my-assertions"
@@ -367,10 +386,8 @@ class SvnReposTest < Test::Unit::TestCase
 
   def assert_report
     file = "file"
-    file2 = "file2"
-    fs_base = "base"
+    fs_base = "/"
     path = File.join(@wc_path, file)
-    path2 = File.join(@wc_path, file2)
     source = "sample source"
     log = "sample log"
     make_context(log) do |ctx|
@@ -386,7 +403,7 @@ class SvnReposTest < Test::Unit::TestCase
         :revision => rev,
         :user_name => @author,
         :fs_base => fs_base,
-        :target => "/",
+        :target => "",
         :target_path => nil,
         :editor => editor,
         :text_deltas => true,
@@ -394,17 +411,23 @@ class SvnReposTest < Test::Unit::TestCase
         :ignore_ancestry => false,
       }
       callback = Proc.new do |baton|
-        baton.link_path(file, file2, rev)
-        baton.delete_path(file)
       end
       yield(@repos, args, callback)
+      editor_seq = editor.sequence.collect{|meth, *args| meth}
+
+      # Delete change_file_prop() and change_dir_prop() calls from the
+      # actual editor sequence, as they can vary in ways not easily
+      # determined by a black-box test author.
+      editor_seq.delete(:change_file_prop)
+      editor_seq.delete(:change_dir_prop)
+
       assert_equal([
                      :set_target_revision,
                      :open_root,
                      :close_directory,
                      :close_edit,
                    ],
-                   editor.sequence.collect{|meth, *args| meth})
+                   editor_seq)
     end
   end
 
@@ -472,52 +495,53 @@ class SvnReposTest < Test::Unit::TestCase
                  commit_callback_result)
     rev2 = @repos.youngest_rev
 
-    ctx = make_context("")
-    ctx.up(@wc_path)
-    assert_equal(source, File.open(trunk_path) {|f| f.read})
+    make_context("") do |ctx|
+      ctx.up(@wc_path)
+      assert_equal(source, File.open(trunk_path) {|f| f.read})
 
-    commit_callback_result = {}
-    editor = yield(@repos, commit_callback_result, args)
-    root_baton = editor.open_root(rev2)
-    dir_baton = editor.add_directory(tags, root_baton, nil, rev2)
-    subdir_baton = editor.add_directory("#{tags}/#{tags_sub}",
-                                        dir_baton,
-                                        trunk_repos_uri,
-                                        rev2)
-    editor.close_edit
+      commit_callback_result = {}
+      editor = yield(@repos, commit_callback_result, args)
+      root_baton = editor.open_root(rev2)
+      dir_baton = editor.add_directory(tags, root_baton, nil, rev2)
+      subdir_baton = editor.add_directory("#{tags}/#{tags_sub}",
+                                          dir_baton,
+                                          trunk_repos_uri,
+                                          rev2)
+      editor.close_edit
 
-    assert_equal(rev2 + 1, @repos.youngest_rev)
-    assert_equal({
-                   :revision => @repos.youngest_rev,
-                   :date => @repos.prop(Svn::Core::PROP_REVISION_DATE),
-                   :author => user,
-                 },
-                 commit_callback_result)
-    rev3 = @repos.youngest_rev
+      assert_equal(rev2 + 1, @repos.youngest_rev)
+      assert_equal({
+                     :revision => @repos.youngest_rev,
+                     :date => @repos.prop(Svn::Core::PROP_REVISION_DATE),
+                     :author => user,
+                   },
+                   commit_callback_result)
+      rev3 = @repos.youngest_rev
 
-    ctx.up(@wc_path)
-    assert_equal([
-                   ["/#{tags}/#{tags_sub}/#{file}", rev3],
-                   ["/#{trunk}/#{file}", rev2],
-                 ],
-                 @repos.fs.history("#{tags}/#{tags_sub}/#{file}",
-                                   rev1, rev3, rev2))
+      ctx.up(@wc_path)
+      assert_equal([
+                     ["/#{tags}/#{tags_sub}/#{file}", rev3],
+                     ["/#{trunk}/#{file}", rev2],
+                   ],
+                   @repos.fs.history("#{tags}/#{tags_sub}/#{file}",
+                                     rev1, rev3, rev2))
 
-    commit_callback_result = {}
-    editor = yield(@repos, commit_callback_result, args)
-    root_baton = editor.open_root(rev3)
-    dir_baton = editor.delete_entry(tags, rev3, root_baton)
-    editor.close_edit
+      commit_callback_result = {}
+      editor = yield(@repos, commit_callback_result, args)
+      root_baton = editor.open_root(rev3)
+      dir_baton = editor.delete_entry(tags, rev3, root_baton)
+      editor.close_edit
 
-    assert_equal({
-                   :revision => @repos.youngest_rev,
-                   :date => @repos.prop(Svn::Core::PROP_REVISION_DATE),
-                   :author => user,
-                 },
-                 commit_callback_result)
+      assert_equal({
+                     :revision => @repos.youngest_rev,
+                     :date => @repos.prop(Svn::Core::PROP_REVISION_DATE),
+                     :author => user,
+                   },
+                   commit_callback_result)
 
-    ctx.up(@wc_path)
-    assert(!File.exist?(tags_path))
+      ctx.up(@wc_path)
+      assert(!File.exist?(tags_path))
+    end
   end
 
   def test_commit_editor
@@ -652,9 +676,10 @@ class SvnReposTest < Test::Unit::TestCase
       @repos.dump_fs(dump, nil, rev1, rev2)
 
       dest_path = File.join(@tmp_path, "dest")
-      repos = Svn::Repos.create(dest_path)
-      assert_raises(NoMethodError) do
-        repos.load_fs(nil)
+      Svn::Repos.create(dest_path) do |repos|
+        assert_raises(NoMethodError) do
+          repos.load_fs(nil)
+        end
       end
 
       [
@@ -663,13 +688,14 @@ class SvnReposTest < Test::Unit::TestCase
        [],
       ].each_with_index do |args, i|
         dest_path = File.join(@tmp_path, "dest#{i}")
-        repos = Svn::Repos.create(dest_path)
-        assert_not_equal(@repos.fs.root.committed_info("/"),
-                         repos.fs.root.committed_info("/"))
-        dump.rewind
-        repos.load_fs(dump, *args)
-        assert_equal(@repos.fs.root.committed_info("/"),
-                     repos.fs.root.committed_info("/"))
+        Svn::Repos.create(dest_path) do |repos|
+          assert_not_equal(@repos.fs.root.committed_info("/"),
+                           repos.fs.root.committed_info("/"))
+          dump.rewind
+          repos.load_fs(dump, *args)
+          assert_equal(@repos.fs.root.committed_info("/"),
+                       repos.fs.root.committed_info("/"))
+        end
       end
     end
   end

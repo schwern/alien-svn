@@ -3,17 +3,25 @@
 #  svnlook_tests.py:  testing the 'svnlook' tool.
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2004, 2007-2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -24,8 +32,12 @@ import svntest
 
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-XFail = svntest.testcase.XFail
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
 Item = svntest.wc.StateItem
 
 
@@ -84,7 +96,7 @@ def test_misc(sbox):
 
   # give the repo a new UUID
   uuid = "01234567-89ab-cdef-89ab-cdef01234567"
-  svntest.main.run_command_stdin(svntest.main.svnadmin_binary, None, 1,
+  svntest.main.run_command_stdin(svntest.main.svnadmin_binary, None, 0, 1,
                            ["SVN-fs-dump-format-version: 2\n",
                             "\n",
                             "UUID: ", uuid, "\n",
@@ -177,6 +189,7 @@ def test_misc(sbox):
 
 #----------------------------------------------------------------------
 # Issue 1089
+@Issue(1089)
 def delete_file_in_moved_dir(sbox):
   "delete file in moved dir"
 
@@ -203,6 +216,13 @@ def delete_file_in_moved_dir(sbox):
     'A/B/E2'      : Item(status='  ', wc_rev=2),
     'A/B/E2/beta' : Item(status='  ', wc_rev=2),
     })
+  ### this commit fails. the 'alpha' node is marked 'not-present' since it
+  ### is a deleted child of a move/copy. this is all well and proper.
+  ### however, during the commit, the parent node is committed down to just
+  ### the BASE node. at that point, 'alpha' has no parent in WORKING which
+  ### is a schema violation. there is a plan for committing in this kind of
+  ### situation, layed out in wc-ng-design. that needs to be implemented
+  ### in order to get this commit working again.
   svntest.actions.run_and_verify_commit(wc_dir,
                                         expected_output,
                                         expected_status,
@@ -224,6 +244,7 @@ def delete_file_in_moved_dir(sbox):
 
 #----------------------------------------------------------------------
 # Issue 1241
+@Issue(1241)
 def test_print_property_diffs(sbox):
   "test the printing of property diffs"
 
@@ -252,11 +273,22 @@ def test_print_property_diffs(sbox):
   if len(output) != len(expected_output):
     raise svntest.Failure
 
+  canonical_iota_path = iota_path.replace(os.path.sep, '/')
+
   # replace wcdir/iota with iota in expected_output
   for i in range(len(expected_output)):
-    expected_output[i] = expected_output[i].replace(iota_path, 'iota')
+    expected_output[i] = expected_output[i].replace(canonical_iota_path,
+                                                    'iota')
 
-  svntest.verify.compare_and_display_lines('', '', expected_output, output)
+  # Check that the header filenames match.
+  if expected_output[2].split()[1] != output[2].split()[1]:
+    raise svntest.Failure
+  if expected_output[3].split()[1] != output[3].split()[1]:
+    raise svntest.Failure
+
+  svntest.verify.compare_and_display_lines('', '',
+                                           expected_output[4:],
+                                           output[4:])
 
 #----------------------------------------------------------------------
 # Check that svnlook info repairs allows inconsistent line endings in logs.
@@ -311,7 +343,8 @@ text
 """
 
   # load dumpfile with inconsistent newlines into repos.
-  svntest.actions.load_repo(sbox, dump_str=dump_str)
+  svntest.actions.load_repo(sbox, dump_str=dump_str,
+                            bypass_prop_validation=True)
 
   exit_code, output, errput = svntest.main.run_svnlook("info",
                                                        sbox.repo_dir, "-r1")
@@ -363,6 +396,7 @@ def changed_copy_info(sbox):
 
 #----------------------------------------------------------------------
 # Issue 2663
+@Issue(2663)
 def tree_non_recursive(sbox):
   "test 'svnlook tree --non-recursive'"
 
@@ -445,14 +479,14 @@ def diff_ignore_whitespace(sbox):
   # Check the output of 'svnlook diff -x --ignore-space-change' on mu.
   # It should not print anything.
   output = run_svnlook('diff', '-r2', '-x', '--ignore-space-change',
-                       repo_dir, '/A/mu')
+                       repo_dir)
   if output != []:
     raise svntest.Failure
 
   # Check the output of 'svnlook diff -x --ignore-all-space' on mu.
   # It should not print anything.
   output = run_svnlook('diff', '-r2', '-x', '--ignore-all-space',
-                       repo_dir, '/A/mu')
+                       repo_dir)
   if output != []:
     raise svntest.Failure
 
@@ -502,14 +536,25 @@ def diff_ignore_eolstyle(sbox):
 
 
     output = run_svnlook('diff', '-r', str(rev + 1), '-x',
-                         '--ignore-eol-style', repo_dir, '/A/mu')
+                         '--ignore-eol-style', repo_dir)
     rev += 1
+
+    canonical_mu_path = mu_path.replace(os.path.sep, '/')
 
     # replace wcdir/A/mu with A/mu in expected_output
     for i in range(len(expected_output)):
-      expected_output[i] = expected_output[i].replace(mu_path, 'A/mu')
+      expected_output[i] = expected_output[i].replace(canonical_mu_path,
+                                                      'A/mu')
 
-    svntest.verify.compare_and_display_lines('', '', expected_output, output)
+    # Check that the header filenames match.
+    if expected_output[2].split()[1] != output[2].split()[1]:
+      raise svntest.Failure
+    if expected_output[3].split()[1] != output[3].split()[1]:
+      raise svntest.Failure
+
+    svntest.verify.compare_and_display_lines('', '',
+                                             expected_output[4:],
+                                             output[4:])
 
 
 #----------------------------------------------------------------------
@@ -528,10 +573,39 @@ def diff_binary(sbox):
   svntest.main.run_svn(None, 'ci', '-m', 'log msg', mu_path)
 
   # Now run 'svnlook diff' and look for the "Binary files differ" message.
-  output = run_svnlook('diff', repo_dir, '/A/mu')
+  output = run_svnlook('diff', repo_dir)
   if not "(Binary files differ)\n" in output:
     raise svntest.Failure("No 'Binary files differ' indication in "
                           "'svnlook diff' output.")
+
+#----------------------------------------------------------------------
+def test_filesize(sbox):
+  "test 'svnlook filesize'"
+
+  sbox.build()
+  repo_dir = sbox.repo_dir
+  wc_dir = sbox.wc_dir
+
+  tree_output = run_svnlook('tree', '--full-paths', repo_dir)
+  for line in tree_output:
+    # Drop line endings
+    line = line.rstrip()
+    # Skip directories
+    if line[-1] == '/':
+      continue
+    # Run 'svnlook cat' and measure the size of the output.
+    cat_output = run_svnlook('cat', repo_dir, line)
+    cat_size = len("".join(cat_output))
+    # Run 'svnlook filesize' and compare the results with the CAT_SIZE.
+    filesize_output = run_svnlook('filesize', repo_dir, line)
+    if len(filesize_output) != 1:
+      raise svntest.Failure("'svnlook filesize' printed something other than "
+                            "a single line of output.")
+    filesize = int(filesize_output[0].strip())
+    if filesize != cat_size:
+      raise svntest.Failure("'svnlook filesize' and the counted length of "
+                            "'svnlook cat's output differ for the path "
+                            "'%s'." % (line))
 
 #----------------------------------------------------------------------
 def verify_logfile(logfilename, expected_data):
@@ -571,7 +645,7 @@ def output_command(fp, cmd, opt):
   return status
 
 for (svnlook_cmd, svnlook_opt) in %s:
-  output_command(fp, svnlook_cmd, svnlook_opt.split(' '))
+  output_command(fp, svnlook_cmd, svnlook_opt.split())
 fp.close()"""
   pre_commit_hook = svntest.main.get_pre_commit_hook_path(repo_dir)
 
@@ -639,6 +713,7 @@ test_list = [ None,
               diff_ignore_whitespace,
               diff_ignore_eolstyle,
               diff_binary,
+              test_filesize,
               test_txn_flag,
              ]
 

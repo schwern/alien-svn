@@ -1,17 +1,22 @@
 /* fs_skels.c --- conversion between fs native types and skeletons
  *
  * ====================================================================
- * Copyright (c) 2000-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -26,6 +31,7 @@
 #include "svn_time.h"
 
 #include "private/svn_skel.h"
+#include "private/svn_dep_compat.h"
 
 #include "svn_checksum.h"
 #include "fs_skels.h"
@@ -428,8 +434,9 @@ svn_fs_base__parse_transaction_skel(transaction_t **transaction_p,
     {
       /* Committed transactions have a revision number... */
       transaction->base_id = NULL;
-      transaction->revision = atoi(apr_pstrmemdup(pool, base_id_or_rev->data,
-                                                  base_id_or_rev->len));
+      transaction->revision =
+        SVN_STR_TO_REV(apr_pstrmemdup(pool, base_id_or_rev->data,
+                                      base_id_or_rev->len));
       if (! SVN_IS_VALID_REVNUM(transaction->revision))
         return skel_err("transaction");
 
@@ -544,32 +551,38 @@ svn_fs_base__parse_representation_skel(representation_t **rep_p,
         {
           svn_skel_t *window_skel = chunk_skel->children->next;
           svn_skel_t *diff_skel = window_skel->children;
+          apr_int64_t val;
+          apr_uint64_t uval;
+          const char *str;
 
           /* Allocate a chunk and its window */
           chunk = apr_palloc(pool, sizeof(*chunk));
 
           /* Populate the window */
-          chunk->version
-            = (apr_byte_t)atoi(apr_pstrmemdup
-                               (pool,
-                                diff_skel->children->next->data,
-                                diff_skel->children->next->len));
+          str = apr_pstrmemdup(pool, diff_skel->children->next->data,
+                               diff_skel->children->next->len);
+          SVN_ERR(svn_cstring_strtoui64(&uval, str, 0, 255, 10));
+          chunk->version = (apr_byte_t)uval;
+
           chunk->string_key
             = apr_pstrmemdup(pool,
                              diff_skel->children->next->next->data,
                              diff_skel->children->next->next->len);
-          chunk->size
-            = atoi(apr_pstrmemdup(pool,
-                                  window_skel->children->next->data,
-                                  window_skel->children->next->len));
+
+          str = apr_pstrmemdup(pool, window_skel->children->next->data,
+                               window_skel->children->next->len);
+          SVN_ERR(svn_cstring_strtoui64(&uval, str, 0, APR_SIZE_MAX, 10));
+          chunk->size = (apr_size_t)uval;
+
           chunk->rep_key
             = apr_pstrmemdup(pool,
                              window_skel->children->next->next->data,
                              window_skel->children->next->next->len);
-          chunk->offset =
-            svn__atoui64(apr_pstrmemdup(pool,
-                                        chunk_skel->children->data,
-                                        chunk_skel->children->len));
+
+          str = apr_pstrmemdup(pool, chunk_skel->children->data,
+                               chunk_skel->children->len);
+          SVN_ERR(svn_cstring_strtoi64(&val, str, 0, APR_INT64_MAX, 10));
+          chunk->offset = (svn_filesize_t)val;
 
           /* Add this chunk to the array. */
           APR_ARRAY_PUSH(chunks, rep_delta_chunk_t *) = chunk;
@@ -627,24 +640,28 @@ svn_fs_base__parse_node_revision_skel(node_revision_t **noderev_p,
       noderev->predecessor_count = -1;
       if (cur_skel->next)
         {
+          const char *str;
+
           cur_skel = cur_skel->next;
           if (cur_skel->len)
-            noderev->predecessor_count = atoi(apr_pstrmemdup(pool,
-                                                             cur_skel->data,
-                                                             cur_skel->len));
+            {
+              str = apr_pstrmemdup(pool, cur_skel->data, cur_skel->len);
+              SVN_ERR(svn_cstring_atoi(&noderev->predecessor_count, str));
+            }
 
           /* HAS-MERGEINFO and MERGEINFO-COUNT */
           if (cur_skel->next)
             {
+              int val;
+
               cur_skel = cur_skel->next;
-              noderev->has_mergeinfo = atoi(apr_pstrmemdup(pool,
-                                                           cur_skel->data,
-                                                           cur_skel->len))
-                                         != 0;
-              noderev->mergeinfo_count =
-                apr_atoi64(apr_pstrmemdup(pool,
-                                          cur_skel->next->data,
-                                          cur_skel->next->len));
+              str = apr_pstrmemdup(pool, cur_skel->data, cur_skel->len);
+              SVN_ERR(svn_cstring_atoi(&val, str));
+              noderev->has_mergeinfo = (val != 0);
+
+              str = apr_pstrmemdup(pool, cur_skel->next->data,
+                                   cur_skel->next->len);
+              SVN_ERR(svn_cstring_atoi64(&noderev->mergeinfo_count, str));
             }
         }
     }
@@ -1054,14 +1071,14 @@ svn_fs_base__unparse_representation_skel(svn_skel_t **skel_p,
 
   /* SHA1 */
   if ((format >= SVN_FS_BASE__MIN_REP_SHARING_FORMAT) && rep->sha1_checksum)
-    prepend_checksum(header_skel, rep->sha1_checksum, pool);
+    SVN_ERR(prepend_checksum(header_skel, rep->sha1_checksum, pool));
 
   /* MD5 */
   {
     svn_checksum_t *md5_checksum = rep->md5_checksum;
     if (! md5_checksum)
       md5_checksum = svn_checksum_create(svn_checksum_md5, pool);
-    prepend_checksum(header_skel, md5_checksum, pool);
+    SVN_ERR(prepend_checksum(header_skel, md5_checksum, pool));
   }
 
   /* TXN */

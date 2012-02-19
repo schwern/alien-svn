@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2003-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  */
@@ -24,6 +29,9 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import org.tigris.subversion.javahl.ProgressListener;
+import org.tigris.subversion.javahl.PromptUserPassword;
+import org.tigris.subversion.javahl.PromptUserPassword3;
 
 import junit.framework.TestCase;
 
@@ -157,10 +165,10 @@ class SVNTests extends TestCase
             rootDirectoryName = System.getProperty("user.dir");
         rootDir = new File(rootDirectoryName);
 
-        // if not alread set, get a usefull value for root url
+        // if not already set, get a useful value for root url
         if (rootUrl == null)
             rootUrl = System.getProperty("test.rooturl");
-        if (rootUrl == null)
+        if (rootUrl == null || rootUrl.trim().length() == 0)
         {
             // if no root url, set build a file url
             rootUrl = rootDir.toURI().toString();
@@ -262,10 +270,73 @@ class SVNTests extends TestCase
         this.client = new SVNClientSynchronized();
         this.client.notification2(new MyNotifier());
         this.client.commitMessageHandler(new MyCommitMessage());
+        this.client.setPrompt(new DefaultPromptUserPassword());
         this.client.username("jrandom");
-        this.client.password("rayjandom");
+        this.client.setProgressListener(new DefaultProgressListener());
         this.client.setConfigDirectory(this.conf.getAbsolutePath());
         this.expectedCommitItems = new HashMap();
+    }
+    /**
+     * the default prompt : never prompts the user, provides defaults answers
+     */
+    private static class DefaultPromptUserPassword implements PromptUserPassword3
+    {
+
+        public int askTrustSSLServer(String info, boolean allowPermanently)
+        {
+            return PromptUserPassword3.AcceptTemporary;
+        }
+
+        public String askQuestion(String realm, String question, boolean showAnswer)
+        {
+            return "";
+        }
+
+        public boolean askYesNo(String realm, String question, boolean yesIsDefault)
+        {
+            return yesIsDefault;
+        }
+
+        public String getPassword()
+        {
+            return "rayjandom";
+        }
+
+        public String getUsername()
+        {
+            return "jrandom";
+        }
+
+        public boolean prompt(String realm, String username)
+        {
+            return false;
+        }
+
+        public boolean prompt(String realm, String username, boolean maySave)
+        {
+            return false;
+        }
+
+        public String askQuestion(String realm, String question,
+                boolean showAnswer, boolean maySave)
+        {
+            return "";
+        }
+
+        public boolean userAllowedSave()
+        {
+            return false;
+        }
+    }
+
+    private static class DefaultProgressListener implements ProgressListener
+    {
+
+        public void onProgress(ProgressEvent event)
+        {
+            // Do nothing, just receive the event
+        }
+
     }
 
     /**
@@ -564,17 +635,19 @@ class SVNTests extends TestCase
          *
          * @param createWC Whether to create the working copy on disk,
          * and initialize the expected working copy layout.
+         * @param loadRepos Whether to load the sample repository, or
+         * leave it with no initial revisions
          * @throws SubversionException If there is a problem
          * creating or loading the repository.
          * @throws IOException If there is a problem finding the
          * dump file.
          */
-        protected OneTest(boolean createWC)
+        protected OneTest(boolean createWC, boolean loadRepos)
             throws SubversionException, IOException
         {
             this.testName = testBaseName + ++testCounter;
             this.wc = greekWC.copy();
-            this.repository = createInitialRepository();
+            this.repository = createInitialRepository(loadRepos);
             this.url = makeReposUrl(repository);
 
             if (createWC)
@@ -583,6 +656,21 @@ class SVNTests extends TestCase
             }
         }
 
+        /**
+         * Build a new test setup with a new repository.  Create a
+         * corresponding working copy and expected working copy
+         * layout.
+         *
+         * @param createWC Whether to create the working copy on disk,
+         * and initialize the expected working copy layout.
+         *
+         * @see #OneTest
+         */
+        protected OneTest(boolean createWC)
+            throws SubversionException, IOException
+        {
+            this(createWC,true);
+        }
         /**
          * Build a new test setup with a new repository.  Create a
          * corresponding working copy and expected working copy
@@ -690,7 +778,7 @@ class SVNTests extends TestCase
          * @throws IOException If there is a problem finding the
          * dump file.
          */
-        protected File createInitialRepository()
+        protected File createInitialRepository(boolean loadGreek)
             throws SubversionException, IOException
         {
             // build a clean repository directory
@@ -699,8 +787,11 @@ class SVNTests extends TestCase
             // create and load the repository from the default repository dump
             admin.create(repos.getAbsolutePath(), true, false,
                          conf.getAbsolutePath(), fsType);
-            admin.load(repos.getAbsolutePath(), new FileInputer(greekDump),
-                       new IgnoreOutputer(), false, false, null);
+            if (loadGreek)
+            {
+                admin.load(repos.getAbsolutePath(), new FileInputer(greekDump),
+                           new IgnoreOutputer(), false, false, null);
+            }
             return repos;
         }
 
@@ -777,16 +868,16 @@ class SVNTests extends TestCase
     {
         /**
          * Retrieve a commit message from the user based on the items
-         * to be commited
-         * @param elementsToBeCommited  Array of elements to be commited
+         * to be committed
+         * @param elementsToBeCommitted  Array of elements to be committed
          * @return  the log message of the commit.
          */
-        public String getLogMessage(CommitItem[] elementsToBeCommited)
+        public String getLogMessage(CommitItem[] elementsToBeCommitted)
         {
             // check all received CommitItems are expected as received
-            for (int i = 0; i < elementsToBeCommited.length; i++)
+            for (int i = 0; i < elementsToBeCommitted.length; i++)
             {
-                CommitItem commitItem = elementsToBeCommited[i];
+                CommitItem commitItem = elementsToBeCommitted[i];
                 // since imports do not provide a url, the key is either url or
                 // path
                 String key;
@@ -827,7 +918,7 @@ class SVNTests extends TestCase
          */
         int myNodeKind;
         /**
-         * the reason why this item is commited (see CommitItemStateFlag)
+         * the reason why this item is committed (see CommitItemStateFlag)
          */
         int myStateFlags;
         /**

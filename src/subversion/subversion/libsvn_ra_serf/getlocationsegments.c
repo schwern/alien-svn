@@ -3,17 +3,22 @@
  *                          RA functions for ra_serf
  *
  * ====================================================================
- * Copyright (c) 2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -34,7 +39,13 @@
 
 
 
-typedef struct {
+typedef struct gls_context_t {
+  /* parameters set by our caller */
+  svn_revnum_t peg_revision;
+  svn_revnum_t start_rev;
+  svn_revnum_t end_rev;
+  const char *path;
+
   /* location segment callback function/baton */
   svn_location_segment_receiver_t receiver;
   void *receiver_baton;
@@ -44,9 +55,6 @@ typedef struct {
 
   /* True iff we're looking at a child of the outer report tag */
   svn_boolean_t inside_report;
-
-  /* Return error code */
-  svn_error_t *error;
 
   int status_code;
 
@@ -118,6 +126,49 @@ end_gls(svn_ra_serf__xml_parser_t *parser,
   return SVN_NO_ERROR;
 }
 
+/* Implements svn_ra_serf__request_body_delegate_t */
+static svn_error_t *
+create_gls_body(serf_bucket_t **body_bkt,
+                void *baton,
+                serf_bucket_alloc_t *alloc,
+                apr_pool_t *pool)
+{
+  serf_bucket_t *buckets;
+  gls_context_t *gls_ctx = baton;
+
+  buckets = serf_bucket_aggregate_create(alloc);
+
+  svn_ra_serf__add_open_tag_buckets(buckets, alloc,
+                                    "S:get-location-segments",
+                                    "xmlns:S", SVN_XML_NAMESPACE,
+                                    NULL);
+
+  svn_ra_serf__add_tag_buckets(buckets,
+                               "S:path", gls_ctx->path,
+                               alloc);
+
+  svn_ra_serf__add_tag_buckets(buckets,
+                               "S:peg-revision",
+                               apr_ltoa(pool, gls_ctx->peg_revision),
+                               alloc);
+
+  svn_ra_serf__add_tag_buckets(buckets,
+                               "S:start-revision",
+                               apr_ltoa(pool, gls_ctx->start_rev),
+                               alloc);
+
+  svn_ra_serf__add_tag_buckets(buckets,
+                               "S:end-revision",
+                               apr_ltoa(pool, gls_ctx->end_rev),
+                               alloc);
+
+  svn_ra_serf__add_close_tag_buckets(buckets, alloc,
+                                     "S:get-location-segments");
+
+  *body_bkt = buckets;
+  return SVN_NO_ERROR;
+}
+
 svn_error_t *
 svn_ra_serf__get_location_segments(svn_ra_session_t *ra_session,
                                    const char *path,
@@ -132,57 +183,31 @@ svn_ra_serf__get_location_segments(svn_ra_session_t *ra_session,
   svn_ra_serf__session_t *session = ra_session->priv;
   svn_ra_serf__handler_t *handler;
   svn_ra_serf__xml_parser_t *parser_ctx;
-  serf_bucket_t *buckets;
   const char *relative_url, *basecoll_url, *req_url;
-  svn_error_t *err;
+  svn_error_t *err, *err2;
 
   gls_ctx = apr_pcalloc(pool, sizeof(*gls_ctx));
+  gls_ctx->path = path;
+  gls_ctx->peg_revision = peg_revision;
+  gls_ctx->start_rev = start_rev;
+  gls_ctx->end_rev = end_rev;
   gls_ctx->receiver = receiver;
   gls_ctx->receiver_baton = receiver_baton;
   gls_ctx->subpool = svn_pool_create(pool);
   gls_ctx->inside_report = FALSE;
-  gls_ctx->error = SVN_NO_ERROR;
   gls_ctx->done = FALSE;
-
-  buckets = serf_bucket_aggregate_create(session->bkt_alloc);
-
-  svn_ra_serf__add_open_tag_buckets(buckets, session->bkt_alloc,
-                                    "S:get-location-segments",
-                                    "xmlns:S", SVN_XML_NAMESPACE,
-                                    NULL);
-
-  svn_ra_serf__add_tag_buckets(buckets,
-                               "S:path", path,
-                               session->bkt_alloc);
-
-  svn_ra_serf__add_tag_buckets(buckets,
-                               "S:peg-revision",
-                               apr_ltoa(pool, peg_revision),
-                               session->bkt_alloc);
-
-  svn_ra_serf__add_tag_buckets(buckets,
-                               "S:start-revision",
-                               apr_ltoa(pool, start_rev),
-                               session->bkt_alloc);
-
-  svn_ra_serf__add_tag_buckets(buckets,
-                               "S:end-revision",
-                               apr_ltoa(pool, end_rev),
-                               session->bkt_alloc);
-
-  svn_ra_serf__add_close_tag_buckets(buckets, session->bkt_alloc,
-                                     "S:get-location-segments");
 
   SVN_ERR(svn_ra_serf__get_baseline_info(&basecoll_url, &relative_url, session,
                                          NULL, NULL, peg_revision, NULL, pool));
 
-  req_url = svn_path_url_add_component(basecoll_url, relative_url, pool);
+  req_url = svn_path_url_add_component2(basecoll_url, relative_url, pool);
 
   handler = apr_pcalloc(pool, sizeof(*handler));
 
   handler->method = "REPORT";
   handler->path = req_url;
-  handler->body_buckets = buckets;
+  handler->body_delegate = create_gls_body;
+  handler->body_delegate_baton = gls_ctx;
   handler->body_type = "text/xml";
   handler->conn = session->conns[0];
   handler->session = session;
@@ -203,20 +228,20 @@ svn_ra_serf__get_location_segments(svn_ra_session_t *ra_session,
 
   err = svn_ra_serf__context_run_wait(&gls_ctx->done, session, pool);
 
-  if (gls_ctx->error || parser_ctx->error)
-    {
-      svn_error_clear(err);
-      err = SVN_NO_ERROR;
-      SVN_ERR(gls_ctx->error);
-      SVN_ERR(parser_ctx->error);
-    }
-
   if (gls_ctx->inside_report)
-    err = svn_error_createf(SVN_ERR_RA_DAV_REQUEST_FAILED, NULL,
+    err = svn_error_createf(SVN_ERR_RA_DAV_REQUEST_FAILED, err,
                             _("Location segment report failed on '%s'@'%ld'"),
                               path, peg_revision);
 
-  SVN_ERR(svn_ra_serf__error_on_status(gls_ctx->status_code, handler->path));
+  err2 = svn_ra_serf__error_on_status(gls_ctx->status_code,
+                                      handler->path,
+                                      parser_ctx->location);
+  if (err2)
+    {
+      /* Prefer err2 to err. */
+      svn_error_clear(err);
+      return err2;
+    }
 
   svn_pool_destroy(gls_ctx->subpool);
 

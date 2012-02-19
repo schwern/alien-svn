@@ -2,17 +2,22 @@
  * target-test.c: test the condense_targets functions
  *
  * ====================================================================
- * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -25,6 +30,8 @@
 #else
 #include <unistd.h> /* for getcwd() */
 #endif
+
+#define SVN_DEPRECATED
 
 #include "svn_pools.h"
 #include "svn_path.h"
@@ -59,7 +66,8 @@ condense_targets_tests_helper(const char* title,
   apr_array_header_t *targets;
   apr_array_header_t *condensed_targets;
   const char *common_path, *common_path2, *curdir;
-  char *token, *iter, *exp_common_abs = (char*)exp_common;
+  char *token, *iter;
+  const char *exp_common_abs = exp_common;
   int i;
   char buf[8192];
 
@@ -83,7 +91,7 @@ condense_targets_tests_helper(const char* title,
 
   /* Verify the common part with the expected (prefix with cwd). */
   if (*exp_common == '%')
-    exp_common_abs = apr_pstrcat(pool, curdir, exp_common + 1, NULL);
+    exp_common_abs = apr_pstrcat(pool, curdir, exp_common + 1, (char *)NULL);
 
   if (strcmp(common_path, exp_common_abs) != 0)
     {
@@ -100,7 +108,7 @@ condense_targets_tests_helper(const char* title,
     {
       const char * target = APR_ARRAY_IDX(condensed_targets, i, const char*);
       if (token && (*token == '%'))
-        token = apr_pstrcat(pool, curdir, token + 1, NULL);
+        token = apr_pstrcat(pool, curdir, token + 1, (char *)NULL);
       if (! token ||
           (target && (strcmp(target, token) != 0)))
         {
@@ -132,10 +140,7 @@ condense_targets_tests_helper(const char* title,
 
 
 static svn_error_t *
-test_path_condense_targets(const char **msg,
-                           svn_boolean_t msg_only,
-                           svn_test_opts_t *opts,
-                           apr_pool_t *pool)
+test_path_condense_targets(apr_pool_t *pool)
 {
   int i;
   struct {
@@ -169,11 +174,6 @@ test_path_condense_targets(const char **msg,
      "", "%/z/A,http://host/A/C" },
   };
 
-  *msg = "test svn_path_condense_targets";
-
-  if (msg_only)
-    return SVN_NO_ERROR;
-
   for (i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
     {
       SVN_ERR(condense_targets_tests_helper(tests[i].title,
@@ -195,6 +195,7 @@ test_path_condense_targets(const char **msg,
 struct svn_test_descriptor_t test_funcs[] =
   {
     SVN_TEST_NULL,
-    SVN_TEST_PASS(test_path_condense_targets),
+    SVN_TEST_PASS2(test_path_condense_targets,
+                   "test svn_path_condense_targets"),
     SVN_TEST_NULL
   };

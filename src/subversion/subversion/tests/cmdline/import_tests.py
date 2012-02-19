@@ -3,17 +3,25 @@
 #  import_tests.py:  import tests
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2007, 2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -24,10 +32,14 @@ import svntest
 from svntest import wc
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-SkipUnless = svntest.testcase.SkipUnless
-XFail = svntest.testcase.XFail
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
 Item = wc.StateItem
+exp_noop_up_out = svntest.actions.expected_noop_update_output
 
 ######################################################################
 # Tests
@@ -36,6 +48,7 @@ Item = wc.StateItem
 
 #----------------------------------------------------------------------
 # this test should be SKIPped on systems without the executable bit
+@SkipUnless(svntest.main.is_posix_os)
 def import_executable(sbox):
   "import of executable files"
 
@@ -278,12 +291,14 @@ def import_avoid_empty_revision(sbox):
   svntest.main.safe_rmtree(empty_dir)
 
   # Verify that an empty revision has not been created
-  svntest.actions.run_and_verify_svn(None, [ "At revision 1.\n"],
+  svntest.actions.run_and_verify_svn(None,
+                                     exp_noop_up_out(1),
                                      [], "update",
                                      empty_dir)
 #----------------------------------------------------------------------
 
 # test for issue 2433: "import" does not handle eol-style correctly
+@Issue(2433)
 def import_eol_style(sbox):
   "import should honor the eol-style property"
 
@@ -355,17 +370,33 @@ enable-auto-props = yes
                                      '--config-dir', config_dir)
 
 #----------------------------------------------------------------------
+@Issue(3983)
+def import_into_foreign_repo(sbox):
+  "import into a foreign repo"
+
+  sbox.build(read_only=True)
+
+  other_repo_dir, other_repo_url = sbox.add_repo_path('other')
+  svntest.main.safe_rmtree(other_repo_dir, 1)
+  svntest.main.create_repos(other_repo_dir)
+
+  svntest.actions.run_and_verify_svn(None, None, [], 'import',
+                                     '-m', 'Log message for new import',
+                                     sbox.ospath('A/mu'), other_repo_url + '/f')
+
+#----------------------------------------------------------------------
 ########################################################################
 # Run the tests
 
 
 # list all tests here, starting with None:
 test_list = [ None,
-              SkipUnless(import_executable, svntest.main.is_posix_os),
+              import_executable,
               import_ignores,
               import_avoid_empty_revision,
               import_no_ignores,
               import_eol_style,
+              import_into_foreign_repo,
              ]
 
 if __name__ == '__main__':

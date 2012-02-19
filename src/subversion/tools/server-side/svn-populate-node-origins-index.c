@@ -3,17 +3,22 @@
  *                                     origins index.
  *
  * ====================================================================
- * Copyright (c) 2007-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -72,7 +77,7 @@ index_revision_adds(int *count, svn_fs_t *fs,
 
   *count = 0;
   SVN_ERR(svn_fs_revision_root(&root, fs, revision, pool));
-  SVN_ERR(svn_fs_paths_changed(&changes, root, pool));
+  SVN_ERR(svn_fs_paths_changed2(&changes, root, pool));
 
   /* No paths changed in this revision?  Nothing to do.  */
   if (apr_hash_count(changes) == 0)
@@ -83,7 +88,7 @@ index_revision_adds(int *count, svn_fs_t *fs,
     {
       const void *path;
       void *val;
-      svn_fs_path_change_t *change;
+      svn_fs_path_change2_t *change;
 
       svn_pool_clear(subpool);
       apr_hash_this(hi, &path, NULL, &val);
@@ -91,12 +96,8 @@ index_revision_adds(int *count, svn_fs_t *fs,
       if ((change->change_kind == svn_fs_path_change_add)
           || (change->change_kind == svn_fs_path_change_replace))
         {
-          const char *copyfrom_path;
-          svn_revnum_t copyfrom_rev;
-
-          SVN_ERR(svn_fs_copied_from(&copyfrom_rev, &copyfrom_path,
-                                     root, path, subpool));
-          if (! (copyfrom_path && SVN_IS_VALID_REVNUM(copyfrom_rev)))
+          if (! (change->copyfrom_path
+                            && SVN_IS_VALID_REVNUM(change->copyfrom_rev)))
             {
               svn_revnum_t origin;
               SVN_ERR(svn_fs_node_origin_rev(&origin, root, path, subpool));
@@ -115,13 +116,13 @@ build_index(const char *repos_path, apr_pool_t *pool)
 {
   svn_repos_t *repos;
   svn_fs_t *fs;
-  svn_revnum_t youngest_rev;
-  int i, slotsize;
+  svn_revnum_t youngest_rev, i;
+  size_t slotsize;
   const char *progress_fmt;
   apr_pool_t *subpool;
 
   /* Open the repository. */
-  SVN_ERR(svn_repos_open(&repos, repos_path, pool));
+  SVN_ERR(svn_repos_open2(&repos, repos_path, NULL, pool));
 
   /* Get a filesystem object. */
   fs = svn_repos_fs(repos);
@@ -129,9 +130,12 @@ build_index(const char *repos_path, apr_pool_t *pool)
   /* Fetch the youngest revision of the repository. */
   SVN_ERR(svn_fs_youngest_rev(&youngest_rev, fs, pool));
   slotsize = strlen(apr_ltoa(pool, youngest_rev));
-  progress_fmt = apr_psprintf(pool,
-                              "[%%%dd/%%%dd]  Found %%d new lines of history."
-                              "\n", slotsize, slotsize);
+  progress_fmt = apr_psprintf
+                   (pool,
+                    "[%%%" APR_SIZE_T_FMT "ld"
+                    "/%%%" APR_SIZE_T_FMT "ld]  "
+                    "Found %%d new lines of history."
+                    "\n", slotsize, slotsize);
 
   /* Now, iterate over all the revisions, calling index_revision_adds(). */
   subpool = svn_pool_create(pool);
@@ -170,8 +174,8 @@ main(int argc, const char **argv)
   /* Convert argv[1] into a UTF8, internal-format, canonicalized path. */
   if ((err = svn_utf_cstring_to_utf8(&repos_path, argv[1], pool)))
     goto cleanup;
-  repos_path = svn_path_internal_style(repos_path, pool);
-  repos_path = svn_path_canonicalize(repos_path, pool);
+  repos_path = svn_dirent_internal_style(repos_path, pool);
+  repos_path = svn_dirent_canonicalize(repos_path, pool);
 
   if ((err = build_index(repos_path, pool)))
     goto cleanup;

@@ -2,18 +2,25 @@
 # repos.py: public Python interface for repos components
 #
 # Subversion is a tool for revision control.
-# See http://subversion.tigris.org for more information.
+# See http://subversion.apache.org for more information.
 #
 ######################################################################
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# Copyright (c) 2000-2004, 2008-2009 CollabNet.  All rights reserved.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
-#
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 from libsvn.repos import *
@@ -65,12 +72,28 @@ class ChangedPath:
 
 
 class ChangeCollector(_svndelta.Editor):
-  """Available Since: 1.2.0
+  """An editor that, when driven, walks a revision or a transaction and
+  incrementally invokes a callback with ChangedPath instances corresponding to
+  paths changed in that revision.
+
+  Available Since: 1.2.0
   """
 
   # BATON FORMAT: [path, base_path, base_rev]
 
   def __init__(self, fs_ptr, root, pool=None, notify_cb=None):
+    """Construct a walker over the svn_fs_root_t ROOT, which must
+    be in the svn_fs_t FS_PTR.  Invoke NOTIFY_CB with a single argument
+    of type ChangedPath for each change under ROOT.
+
+    At this time, two ChangedPath objects will be passed for a path that had
+    been replaced in the revision/transaction.  This may change in the future.
+  
+    ### Can't we deduce FS_PTR from ROOT?
+
+    ### POOL is unused
+    """
+
     self.fs_ptr = fs_ptr
     self.changes = { } # path -> ChangedPathEntry()
     self.roots = { } # revision -> svn_svnfs_root_t
@@ -129,9 +152,9 @@ class ChangeCollector(_svndelta.Editor):
     self.changes[path] = ChangedPath(item_type,
                                      False,
                                      False,
-                                     base_path,
+                                     base_path,       # base_path
                                      parent_baton[2], # base_rev
-                                     None,            # (new) path
+                                     path,            # path
                                      False,           # added
                                      CHANGE_ACTION_DELETE,
                                      )

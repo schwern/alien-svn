@@ -1,4 +1,24 @@
 #!/usr/bin/env python
+#
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#
 import sys
 import os
 from svn import client, ra, core
@@ -71,13 +91,20 @@ ERROR: %s
 
   core.svn_config_ensure(None)
   ctx = client.ctx_t()
-  providers = [
+
+  # Make sure that these are at the start of the list, so passwords from
+  # gnome-keyring / kwallet are checked before asking for new passwords.
+  # Note that we don't pass our config here, since we can't seem to access
+  # ctx.config.config (ctx.config is opaque).
+  providers = core.svn_auth_get_platform_specific_client_providers(None, None)
+  providers.extend([
     client.get_simple_provider(),
     client.get_username_provider(),
     client.get_ssl_server_trust_file_provider(),
     client.get_ssl_client_cert_file_provider(),
     client.get_ssl_client_cert_pw_file_provider(),
-    ]
+  ])
+
   ctx.auth_baton = core.svn_auth_open(providers)
   ctx.config = core.svn_config_get_config(None)
 

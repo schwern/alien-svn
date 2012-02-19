@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2004, 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -71,10 +76,10 @@ typedef struct svn_sort__item_t {
  * @c apr_array_header_t.  For example, to convert hash @a hsh to a sorted
  * array, do this:
  *
- * @verbatim
-     apr_array_header_t *hdr;
-     hdr = svn_sort__hash (hsh, @c svn_sort_compare_items_as_paths, pool);
-   @endverbatim
+ * @code
+     apr_array_header_t *array;
+     array = svn_sort__hash(hsh, svn_sort_compare_items_as_paths, pool);
+   @endcode
  */
 int
 svn_sort_compare_items_as_paths(const svn_sort__item_t *a,
@@ -165,7 +170,7 @@ svn_sort__hash(apr_hash_t *ht,
    COMPARE_FUNC is defined as for the C stdlib function bsearch(). */
 int
 svn_sort__bsearch_lower_bound(const void *key,
-                              apr_array_header_t *array,
+                              const apr_array_header_t *array,
                               int (*compare_func)(const void *, const void *));
 
 /* Insert a shallow copy of *NEW_ELEMENT into the array ARRAY at the index
@@ -176,6 +181,16 @@ svn_sort__array_insert(const void *new_element,
                        apr_array_header_t *array,
                        int insert_index);
 
+
+/* Remove ELEMENTS_TO_DELETE elements starting  at DELETE_INDEX from the
+   array ARR. If DELETE_INDEX is not a valid element of ARR,
+   ELEMENTS_TO_DELETE is not greater than zero, or
+   DELETE_INDEX + ELEMENTS_TO_DELETE is greater than ARR->NELTS, then do
+   nothing. */
+void
+svn_sort__array_delete(apr_array_header_t *arr,
+                       int delete_index,
+                       int elements_to_delete);
 
 #ifdef __cplusplus
 }

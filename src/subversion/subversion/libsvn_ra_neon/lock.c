@@ -2,17 +2,22 @@
  * lock.c :  routines for managing lock states in the DAV server
  *
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -27,6 +32,7 @@
 #include "svn_ra.h"
 #include "../libsvn_ra/ra_loader.h"
 #include "svn_path.h"
+#include "svn_string.h"
 #include "svn_time.h"
 #include "svn_private_config.h"
 
@@ -59,7 +65,7 @@ static const svn_ra_neon__xml_elm_t lock_elements[] =
   { NULL }
 };
 
-typedef struct
+typedef struct lock_baton_t
 {
   svn_stringbuf_t *cdata;
   apr_pool_t *pool;
@@ -204,8 +210,9 @@ lock_from_baton(svn_lock_t **lock,
         {
           if (strncmp("Second-", timeout_str, strlen("Second-")) == 0)
             {
-              int time_offset = atoi(&(timeout_str[7]));
+              int time_offset;
 
+              SVN_ERR(svn_cstring_atoi(&time_offset, &(timeout_str[7])));
               lck->expiration_date = lck->creation_date
                 + apr_time_from_sec(time_offset);
             }
@@ -235,7 +242,7 @@ do_lock(svn_lock_t **lock,
   ne_uri uri;
   int code;
   const char *url;
-  svn_string_t fs_path;
+  const char *fs_path;
   ne_xml_parser *lck_parser;
   svn_ra_neon__session_t *ras = session->priv;
   lock_baton_t *lrb = apr_pcalloc(pool, sizeof(*lrb));
@@ -243,8 +250,8 @@ do_lock(svn_lock_t **lock,
   svn_error_t *err = SVN_NO_ERROR;
 
   /* To begin, we convert the incoming path into an absolute fs-path. */
-  url = svn_path_url_add_component(ras->url->data, path, pool);
-  SVN_ERR(svn_ra_neon__get_baseline_info(NULL, NULL, &fs_path, NULL, ras,
+  url = svn_path_url_add_component2(ras->url->data, path, pool);
+  SVN_ERR(svn_ra_neon__get_baseline_info(NULL, &fs_path, NULL, ras,
                                          url, SVN_INVALID_REVNUM, pool));
 
   if (ne_uri_parse(url, &uri) != 0)
@@ -254,7 +261,7 @@ do_lock(svn_lock_t **lock,
                                _("Failed to parse URI '%s'"), url);
     }
 
-  req = svn_ra_neon__request_create(ras, "LOCK", uri.path, pool);
+  SVN_ERR(svn_ra_neon__request_create(&req, ras, "LOCK", uri.path, pool));
   ne_uri_free(&uri);
 
   lrb->pool = pool;
@@ -271,11 +278,11 @@ do_lock(svn_lock_t **lock,
      " <D:locktype><D:write /></D:locktype>" DEBUG_CR
      "%s" /* maybe owner */
      "</D:lockinfo>",
-     comment ? apr_pstrcat(pool, 
+     comment ? apr_pstrcat(pool,
                            "<D:owner>",
                            apr_xml_quote_string(pool, comment, 0),
                            "</D:owner>",
-                           NULL)
+                           (char *)NULL)
              : "");
 
   extra_headers = apr_hash_make(req->pool);
@@ -295,13 +302,27 @@ do_lock(svn_lock_t **lock,
   if (err)
     goto cleanup;
 
+  err = svn_ra_neon__check_parse_error("LOCK", lck_parser, url);
+  if (err)
+    goto cleanup;
+
   /*###FIXME: we never verified whether we have received back the type
     of lock we requested: was it shared/exclusive? was it write/otherwise?
     How many did we get back? Only one? */
-  err = lock_from_baton(lock, req, fs_path.data, lrb, pool);
+  err = lock_from_baton(lock, req, fs_path, lrb, pool);
 
  cleanup:
+  /* 405 == Method Not Allowed (Occurs when trying to lock a working
+     copy path which no longer exists at HEAD in the repository. */
+  if (code == 405)
+    {
+      svn_error_clear(err);
+      err = svn_error_createf(SVN_ERR_FS_OUT_OF_DATE, NULL,
+                              _("Lock request failed: %d %s"),
+                              code, req->code_desc);
+    }
   svn_ra_neon__request_destroy(req);
+
   return err;
 }
 
@@ -371,17 +392,22 @@ do_unlock(svn_ra_session_t *session,
           const char *path,
           const char *token,
           svn_boolean_t force,
+          const svn_lock_t **old_lock,
           apr_pool_t *pool)
 {
   svn_ra_neon__session_t *ras = session->priv;
   const char *url;
   const char *url_path;
   ne_uri uri;
+  svn_error_t *err = SVN_NO_ERROR;
 
   apr_hash_t *extra_headers = apr_hash_make(pool);
 
+  if (old_lock)
+    *old_lock = NULL;
+
   /* Make a neon lock structure containing token and full URL to unlock. */
-  url = svn_path_url_add_component(ras->url->data, path, pool);
+  url = svn_path_url_add_component2(ras->url->data, path, pool);
   if (ne_uri_parse(url, &uri) != 0)
     {
       ne_uri_free(&uri);
@@ -404,9 +430,9 @@ do_unlock(svn_ra_session_t *session,
                                  _("'%s' is not locked in the repository"),
                                  path);
       token = lock->token;
+      if (old_lock)
+        *old_lock = lock;
     }
-
-
 
   apr_hash_set(extra_headers, "Lock-Token", APR_HASH_KEY_STRING,
                apr_psprintf(pool, "<%s>", token));
@@ -414,8 +440,31 @@ do_unlock(svn_ra_session_t *session,
     apr_hash_set(extra_headers, SVN_DAV_OPTIONS_HEADER, APR_HASH_KEY_STRING,
                  SVN_DAV_OPTION_LOCK_BREAK);
 
-  return svn_ra_neon__simple_request(NULL, ras, "UNLOCK", url_path,
-                                     extra_headers, NULL, 204, 0, pool);
+  {
+    int code = 0;
+
+    err = svn_ra_neon__simple_request(&code, ras, "UNLOCK", url_path,
+                                      extra_headers, NULL, 204, 0, pool);
+
+    if (err && ((err->apr_err == SVN_ERR_RA_DAV_REQUEST_FAILED)
+                || (err->apr_err == SVN_ERR_RA_DAV_FORBIDDEN)))
+      {
+        switch (code)
+          {
+            case 403:
+              return svn_error_createf(SVN_ERR_FS_LOCK_OWNER_MISMATCH, err,
+                                       _("Unlock failed on '%s'"
+                                         " (%d Forbidden)"), path, code);
+            case 400:
+               return svn_error_createf(SVN_ERR_FS_NO_SUCH_LOCK, err,
+                                       _("No lock on path '%s'"
+                                         " (%d Bad Request)"), path, code);
+            default:
+              break;
+          }
+      }
+  }
+  return svn_error_trace(err);
 }
 
 
@@ -441,6 +490,7 @@ svn_ra_neon__unlock(svn_ra_session_t *session,
       void *val;
       const char *token;
       svn_error_t *err, *callback_err = NULL;
+      const svn_lock_t *old_lock = NULL;
 
       svn_pool_clear(iterpool);
 
@@ -453,7 +503,7 @@ svn_ra_neon__unlock(svn_ra_session_t *session,
       else
         token = NULL;
 
-      err = do_unlock(session, path, token, force, iterpool);
+      err = do_unlock(session, path, token, force, &old_lock, iterpool);
 
       if (err && !SVN_ERR_IS_UNLOCK_ERROR(err))
         {
@@ -462,7 +512,8 @@ svn_ra_neon__unlock(svn_ra_session_t *session,
         }
 
       if (lock_func)
-        callback_err = lock_func(lock_baton, path, FALSE, NULL, err, iterpool);
+        callback_err = svn_error_trace(
+                 lock_func(lock_baton, path, FALSE, old_lock, err, iterpool));
 
       svn_error_clear(err);
 
@@ -476,7 +527,8 @@ svn_ra_neon__unlock(svn_ra_session_t *session,
   svn_pool_destroy(iterpool);
 
  departure:
-  return svn_ra_neon__maybe_store_auth_info_after_result(ret_err, ras, pool);
+  return svn_error_trace(
+          svn_ra_neon__maybe_store_auth_info_after_result(ret_err, ras, pool));
 }
 
 
@@ -487,7 +539,7 @@ svn_ra_neon__get_lock_internal(svn_ra_neon__session_t *ras,
                                apr_pool_t *pool)
 {
   const char *url;
-  svn_string_t fs_path;
+  const char *fs_path;
   svn_error_t *err;
   ne_uri uri;
   lock_baton_t *lrb = apr_pcalloc(pool, sizeof(*lrb));
@@ -503,9 +555,9 @@ svn_ra_neon__get_lock_internal(svn_ra_neon__session_t *ras,
     "</D:propfind>";
 
   /* To begin, we convert the incoming path into an absolute fs-path. */
-  url = svn_path_url_add_component(ras->url->data, path, pool);
+  url = svn_path_url_add_component2(ras->url->data, path, pool);
 
-  err = svn_ra_neon__get_baseline_info(NULL, NULL, &fs_path, NULL, ras,
+  err = svn_ra_neon__get_baseline_info(NULL, &fs_path, NULL, ras,
                                        url, SVN_INVALID_REVNUM, pool);
   SVN_ERR(svn_ra_neon__maybe_store_auth_info_after_result(err, ras, pool));
 
@@ -513,7 +565,7 @@ svn_ra_neon__get_lock_internal(svn_ra_neon__session_t *ras,
   url = apr_pstrdup(pool, uri.path);
   ne_uri_free(&uri);
 
-  req = svn_ra_neon__request_create(ras, "PROPFIND", url, pool);
+  SVN_ERR(svn_ra_neon__request_create(&req, ras, "PROPFIND", url, pool));
 
   lrb->pool = pool;
   lrb->xml_table = lock_elements;
@@ -533,9 +585,13 @@ svn_ra_neon__get_lock_internal(svn_ra_neon__session_t *ras,
       goto cleanup;
     }
 
+  err = svn_ra_neon__check_parse_error("PROPFIND", lck_parser, url);
+  if (err)
+    goto cleanup;
+
   /*###FIXME We assume here we only got one lock response. The WebDAV
     spec makes no such guarantees. How to make sure we grab the one we need? */
-  err = lock_from_baton(lock, req, fs_path.data, lrb, pool);
+  err = lock_from_baton(lock, req, fs_path, lrb, pool);
 
  cleanup:
   svn_ra_neon__request_destroy(req);

@@ -7,7 +7,7 @@ DESCRIPTION
     Alien::SVN instead and then the CPAN shell can handle automatic
     installation. This is particularly useful for programs like SVK.
 
-    It comes with a copy of Subversion 1.6.12 which it will compile but only
+    It comes with a copy of Subversion 1.7.3 which it will compile but only
     installs the Perl and Subversion libraries. The subversion binaries will
     not be installed.
 

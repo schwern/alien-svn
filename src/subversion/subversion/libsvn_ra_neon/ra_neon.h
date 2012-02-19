@@ -2,17 +2,22 @@
  * ra_neon.h : Private declarations for the Neon-based DAV RA module.
  *
  * ====================================================================
- * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -52,10 +57,11 @@ extern "C" {
 #define SVN_RA_NEON__XML_CDATA   (1<<1)
 #define SVN_RA_NEON__XML_COLLECT ((1<<2) | SVN_RA_NEON__XML_CDATA)
 
+/* ### Related to anonymous enum below? */
 typedef int svn_ra_neon__xml_elmid;
 
 /** XML element */
-typedef struct {
+typedef struct svn_ra_neon__xml_elm_t {
   /** XML namespace. */
   const char *nspace;
 
@@ -77,7 +83,7 @@ typedef struct {
 
 
 
-typedef struct {
+typedef struct svn_ra_neon__session_t {
   apr_pool_t *pool;
   svn_stringbuf_t *url;                 /* original, unparsed session url */
   ne_uri root;                          /* parsed version of above */
@@ -93,7 +99,8 @@ typedef struct {
   void *callback_baton;
 
   svn_auth_iterstate_t *auth_iterstate; /* state of authentication retries */
-  const char *auth_username;            /* last authenticated username used */
+  svn_boolean_t auth_used;              /* Save authorization state after
+                                           successful usage */
 
   svn_auth_iterstate_t *p11pin_iterstate; /* state of PKCS#11 pin retries */
 
@@ -108,6 +115,9 @@ typedef struct {
   svn_ra_progress_notify_func_t progress_func;
   void *progress_baton;
 
+  apr_off_t total_progress;             /* Total number of bytes sent in this
+                                           session with a -1 total marker */
+
   /* Maps SVN_RA_CAPABILITY_foo keys to "yes" or "no" values.
      If a capability is not yet discovered, it is absent from the table.
      The table itself is allocated in the svn_ra_neon__session_t's pool;
@@ -116,10 +126,41 @@ typedef struct {
      well-informed internal code may just compare against those
      constants' addresses, therefore). */
   apr_hash_t *capabilities;
+
+  /* Tri-state variable holding information about server support for
+     deadprop-count property.*/
+  svn_tristate_t supports_deadprop_count;
+
+  /*** HTTP v2 protocol stuff. ***
+   *
+   * We assume that if mod_dav_svn sends one of the special v2 OPTIONs
+   * response headers, it has sent all of them.  Specifically, we'll
+   * be looking at the presence of the "me resource" as a flag that
+   * the server supports v2 of our HTTP protocol.
+   */
+
+  /* The "me resource".  Typically used as a target for REPORTs that
+     are path-agnostic.  If we have this, we can speak HTTP v2 to the
+     server.  */
+  const char *me_resource;
+
+  /* Opaque URL "stubs".  If the OPTIONS response returns these, then
+     we know we're using HTTP protocol v2. */
+  const char *rev_stub;         /* for accessing revisions (i.e. revprops) */
+  const char *rev_root_stub;    /* for accessing REV/PATH pairs */
+  const char *txn_stub;         /* for accessing transactions (i.e. txnprops) */
+  const char *txn_root_stub;    /* for accessing TXN/PATH pairs */
+  const char *vtxn_stub;        /* for accessing transactions (i.e. txnprops) */
+  const char *vtxn_root_stub;   /* for accessing TXN/PATH pairs */
+
+  /*** End HTTP v2 stuff ***/
+
 } svn_ra_neon__session_t;
 
+#define SVN_RA_NEON__HAVE_HTTPV2_SUPPORT(ras) ((ras)->me_resource != NULL)
 
-typedef struct {
+
+typedef struct svn_ra_neon__request_t {
   ne_request *ne_req;                   /* neon request structure */
   ne_session *ne_sess;                  /* neon session structure */
   svn_ra_neon__session_t *sess;          /* DAV session structure */
@@ -167,8 +208,9 @@ typedef struct {
  *
  * Register a pool cleanup for any allocated Neon resources.
  */
-svn_ra_neon__request_t *
-svn_ra_neon__request_create(svn_ra_neon__session_t *sess,
+svn_error_t *
+svn_ra_neon__request_create(svn_ra_neon__request_t **request,
+                            svn_ra_neon__session_t *sess,
                             const char *method, const char *url,
                             apr_pool_t *pool);
 
@@ -218,6 +260,7 @@ svn_error_t *svn_ra_neon__get_dated_revision(svn_ra_session_t *session,
 svn_error_t *svn_ra_neon__change_rev_prop(svn_ra_session_t *session,
                                           svn_revnum_t rev,
                                           const char *name,
+                                          const svn_string_t *const *old_value_p,
                                           const svn_string_t *value,
                                           apr_pool_t *pool);
 
@@ -259,16 +302,14 @@ svn_error_t *svn_ra_neon__get_dir(svn_ra_session_t *session,
                                   apr_uint32_t dirent_fields,
                                   apr_pool_t *pool);
 
-svn_error_t * svn_ra_neon__abort_commit(void *session_baton,
-                                        void *edit_baton);
-
-svn_error_t * svn_ra_neon__get_mergeinfo(svn_ra_session_t *session,
-                                         apr_hash_t **mergeinfo,
-                                         const apr_array_header_t *paths,
-                                         svn_revnum_t revision,
-                                         svn_mergeinfo_inheritance_t inherit,
-                                         svn_boolean_t include_descendants,
-                                         apr_pool_t *pool);
+svn_error_t * svn_ra_neon__get_mergeinfo(
+  svn_ra_session_t *session,
+  apr_hash_t **mergeinfo,
+  const apr_array_header_t *paths,
+  svn_revnum_t revision,
+  svn_mergeinfo_inheritance_t inherit,
+  svn_boolean_t include_descendants,
+  apr_pool_t *pool);
 
 svn_error_t * svn_ra_neon__do_update(svn_ra_session_t *session,
                                      const svn_ra_reporter3_t **reporter,
@@ -350,6 +391,13 @@ svn_error_t *svn_ra_neon__get_file_revs(svn_ra_session_t *session,
                                         apr_pool_t *pool);
 
 
+/* Local duplicate of svn_ra_get_path_relative_to_root(). */
+svn_error_t *svn_ra_neon__get_path_relative_to_root(svn_ra_session_t *session,
+                                                    const char **rel_path,
+                                                    const char *url,
+                                                    apr_pool_t *pool);
+
+
 /*
 ** SVN_RA_NEON__LP_*: local properties for RA/DAV
 **
@@ -390,7 +438,7 @@ svn_error_t *svn_ra_neon__get_file_revs(svn_ra_session_t *session,
 
 #define SVN_RA_NEON__PROP_DEADPROP_COUNT SVN_DAV_PROP_NS_DAV "deadprop-count"
 
-typedef struct {
+typedef struct svn_ra_neon__resource_t {
   /* what is the URL for this resource */
   const char *url;
 
@@ -435,7 +483,6 @@ svn_error_t * svn_ra_neon__get_props_resource(svn_ra_neon__resource_t **rsrc,
 svn_error_t * svn_ra_neon__get_starting_props(svn_ra_neon__resource_t **rsrc,
                                               svn_ra_neon__session_t *sess,
                                               const char *url,
-                                              const char *label,
                                               apr_pool_t *pool);
 
 /* Shared helper func: given a public URL which may not exist in HEAD,
@@ -466,17 +513,14 @@ svn_error_t * svn_ra_neon__get_one_prop(const svn_string_t **propval,
 
 /* Get various Baseline-related information for a given "public" URL.
 
-   Given a session SESS and a URL, return whether the URL is a
-   directory in *IS_DIR.  IS_DIR may be NULL if this flag is unneeded.
-
    REVISION may be SVN_INVALID_REVNUM to indicate that the operation
    should work against the latest (HEAD) revision, or whether it should
    return information about that specific revision.
 
-   If BC_URL is not NULL, then it will be filled in with the URL for
+   If BC_URL_P is not NULL, then it will be filled in with the URL for
    the Baseline Collection for the specified revision, or the HEAD.
 
-   If BC_RELATIVE is not NULL, then it will be filled in with a
+   If BC_RELATIVE_P is not NULL, then it will be filled in with a
    relative pathname for the baselined resource corresponding to the
    revision of the resource specified by URL.
 
@@ -485,16 +529,15 @@ svn_error_t * svn_ra_neon__get_one_prop(const svn_string_t **propval,
    as the REVISION parameter, unless we are working against the HEAD. In
    that case, the HEAD revision number is returned.
 
-   Allocation for BC_URL->data, BC_RELATIVE->data, and temporary data,
+   Allocation for *BC_URL_P, *BC_RELATIVE_P, and temporary data,
    will occur in POOL.
 
    Note: a Baseline Collection is a complete tree for a specified Baseline.
    DeltaV baselines correspond one-to-one to Subversion revisions. Thus,
    the entire state of a revision can be found in a Baseline Collection.
 */
-svn_error_t *svn_ra_neon__get_baseline_info(svn_boolean_t *is_dir,
-                                            svn_string_t *bc_url,
-                                            svn_string_t *bc_relative,
+svn_error_t *svn_ra_neon__get_baseline_info(const char **bc_url_p,
+                                            const char **bc_relative_p,
                                             svn_revnum_t *latest_rev,
                                             svn_ra_neon__session_t *sess,
                                             const char *url,
@@ -532,12 +575,15 @@ svn_error_t *svn_ra_neon__get_vcc(const char **vcc,
 /* Issue a PROPPATCH request on URL, transmitting PROP_CHANGES (a hash
    of const svn_string_t * values keyed on Subversion user-visible
    property names) and PROP_DELETES (an array of property names to
-   delete).  Send any extra request headers in EXTRA_HEADERS. Use POOL
-   for all allocations.  */
+   delete). PROP_OLD_VALUES is a hash of Subversion user-visible property
+   names mapped to svn_dav__two_props_t * values. Send any extra
+   request headers in EXTRA_HEADERS. Use POOL for all allocations.
+ */
 svn_error_t *svn_ra_neon__do_proppatch(svn_ra_neon__session_t *ras,
                                        const char *url,
                                        apr_hash_t *prop_changes,
-                                       apr_array_header_t *prop_deletes,
+                                       const apr_array_header_t *prop_deletes,
+                                       apr_hash_t *prop_old_values,
                                        apr_hash_t *extra_headers,
                                        apr_pool_t *pool);
 
@@ -632,7 +678,8 @@ typedef svn_error_t * (*svn_ra_neon__endelm_cb_t)(void *baton,
  * Register a pool cleanup on the pool of REQ to clean up any allocated
  * Neon resources.
  *
- * ACCPT indicates whether the parser wants read the response body
+ * Return the new parser.  Also attach it to REQ if ACCPT is non-null.
+ * ACCPT indicates whether the parser wants to read the response body
  * or not.  Pass NULL for ACCPT when you don't want the returned parser
  * to be attached to REQ.
  */
@@ -689,6 +736,15 @@ svn_ra_neon__parsed_request(svn_ra_neon__session_t *sess,
                             apr_pool_t *pool);
 
 
+/* If XML_PARSER found an XML parse error, then return a Subversion error
+ * saying that the error was found in the response to the DAV request METHOD
+ * for the URL URL. Otherwise, return SVN_NO_ERROR. */
+svn_error_t *
+svn_ra_neon__check_parse_error(const char *method,
+                               ne_xml_parser *xml_parser,
+                               const char *url);
+
+/* ### Related to svn_ra_neon__xml_elmid? */
 /* ### add SVN_RA_NEON_ to these to prefix conflicts with (sys) headers? */
 enum {
   /* Redefine Neon elements */
@@ -802,7 +858,8 @@ enum {
   ELEM_mergeinfo_info,
   ELEM_has_children,
   ELEM_merged_revision,
-  ELEM_deleted_rev_report
+  ELEM_deleted_rev_report,
+  ELEM_subtractive_merge
 };
 
 /* ### docco */
@@ -894,12 +951,10 @@ svn_ra_neon__maybe_store_auth_info_after_result(svn_error_t *err,
    NULL, as this will cause Neon to generate a "Content-Length: 0"
    header (which is important to some proxies).
 
-   OKAY_1 and OKAY_2 are the "acceptable" result codes. Anything other
-   than one of these will generate an error. OKAY_1 should always be
-   specified (e.g. as 200); use 0 for OKAY_2 if a second result code is
-   not allowed.
-
- */
+   OKAY_1 and OKAY_2 are the "acceptable" result codes.  Anything
+   other than one of these will generate an error.  OKAY_1 should
+   always be specified (e.g. as 200); use 0 for OKAY_2 if additional
+   result codes aren't allowed.  */
 svn_error_t *
 svn_ra_neon__request_dispatch(int *code_p,
                               svn_ra_neon__request_t *request,
@@ -922,8 +977,9 @@ svn_ra_neon__simple_request(int *code,
                             const char *url,
                             apr_hash_t *extra_headers,
                             const char *body,
-                            int okay_1, int okay_2, apr_pool_t *pool);
-
+                            int okay_1,
+                            int okay_2,
+                            apr_pool_t *pool);
 
 /* Convenience statement macro for setting headers in a hash */
 #define svn_ra_neon__set_header(hash, hdr, val) \
@@ -943,6 +999,7 @@ svn_ra_neon__copy(svn_ra_neon__session_t *ras,
                   apr_pool_t *pool);
 
 /* Return the Location HTTP header or NULL if none was sent.
+ * (Return a canonical URL even if the header ended with a slash.)
  *
  * Do allocations in POOL.
  */
@@ -958,7 +1015,7 @@ svn_ra_neon__get_locations(svn_ra_session_t *session,
                            apr_hash_t **locations,
                            const char *path,
                            svn_revnum_t peg_revision,
-                           apr_array_header_t *location_revisions,
+                           const apr_array_header_t *location_revisions,
                            apr_pool_t *pool);
 
 
@@ -980,6 +1037,7 @@ svn_error_t *
 svn_ra_neon__get_locks(svn_ra_session_t *session,
                        apr_hash_t **locks,
                        const char *path,
+                       svn_depth_t depth,
                        apr_pool_t *pool);
 
 /*
@@ -1056,10 +1114,24 @@ svn_ra_neon__has_capability(svn_ra_session_t *session,
    RAS->capabilities with the server's capabilities as read from the
    response headers.  Use POOL only for temporary allocation.
 
+   If the RELOCATION_LOCATION is non-NULL, allow the OPTIONS response
+   to report a server-dictated redirect or relocation (HTTP 301 or 302
+   error codes), setting *RELOCATION_LOCATION to the value of the
+   corrected repository URL.  Otherwise, such responses from the
+   server will generate an error.  (In either case, no capabilities are
+   exchanged if there is, in fact, such a response from the server.)
+
+   If the server is kind enough to tell us the current youngest
+   revision of the target repository, set *YOUNGEST_REV to that value;
+   set it to SVN_INVALID_REVNUM otherwise.  YOUNGEST_REV may be NULL if
+   the caller is not interested in receiving this information.
+
    NOTE:  This function also expects the server to announce the
    activity collection.  */
 svn_error_t *
 svn_ra_neon__exchange_capabilities(svn_ra_neon__session_t *ras,
+                                   const char **relocation_location,
+                                   svn_revnum_t *youngest_rev,
                                    apr_pool_t *pool);
 
 /*
@@ -1094,6 +1166,21 @@ svn_ra_neon__assemble_locktoken_body(svn_stringbuf_t **body,
                                      apr_hash_t *lock_tokens,
                                      apr_pool_t *pool);
 
+
+/* Wrapper around ne_uri_unparse(). Turns a URI structure back into a string.
+ * The returned string is allocated in POOL. */
+const char *
+svn_ra_neon__uri_unparse(const ne_uri *uri,
+                         apr_pool_t *pool);
+
+/* Sets *SUPPORTS_DEADPROP_COUNT to non-zero if server supports
+ * deadprop-count property. Uses FINAL_URL to discover this informationn
+ * if it is not already cached. */
+svn_error_t *
+svn_ra_neon__get_deadprop_count_support(svn_boolean_t *supported,
+                                        svn_ra_neon__session_t *ras,
+                                        const char *final_url,
+                                        apr_pool_t *pool);
 
 #ifdef __cplusplus
 }

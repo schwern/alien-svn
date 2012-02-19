@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2006, 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -275,13 +280,25 @@ svn_xml_hash_atts_overlaying(const char **atts,
 /** Create an XML header and return it in @a *str.
  *
  * Fully-formed XML documents should start out with a header,
- * something like
- *         \<?xml version="1.0" encoding="utf-8"?\>
+ * something like <pre>
+ *         \<?xml version="1.0" encoding="UTF-8"?\>
+ * </pre>
  *
  * This function returns such a header.  @a *str must either be @c NULL, in
  * which case a new string is created, or it must point to an existing
- * string to be appended to.
+ * string to be appended to. @a encoding must either be NULL, in which case
+ * encoding information is omitted from the header, or must be the name of
+ * the encoding of the XML document, such as "UTF-8".
+ *
+ * @since New in 1.7.
  */
+void
+svn_xml_make_header2(svn_stringbuf_t **str,
+                     const char *encoding,
+                     apr_pool_t *pool);
+
+/* Like svn_xml_make_header2, but does not emit encoding information. */
+SVN_DEPRECATED
 void
 svn_xml_make_header(svn_stringbuf_t **str,
                     apr_pool_t *pool);

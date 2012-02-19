@@ -2,17 +2,22 @@
  * merge.c :  routines for performing a MERGE server requests
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -32,6 +37,8 @@
 #include "svn_xml.h"
 
 #include "private/svn_dav_protocol.h"
+#include "private/svn_fspath.h"
+
 #include "svn_private_config.h"
 
 #include "ra_neon.h"
@@ -71,7 +78,7 @@ enum merge_rtype {
   RTYPE_BASELINE    /* a baseline resource */
 };
 
-typedef struct {
+typedef struct merge_ctx_t {
   /*WARNING: WANT_CDATA should stay the first element in the baton:
     svn_ra_neon__xml_collect_cdata() assumes the baton starts with a stringbuf.
   */
@@ -252,7 +259,7 @@ static svn_error_t * handle_resource(merge_ctx_t *mc,
     }
 
   /* a collection or regular resource */
-  if (! svn_path_is_ancestor(mc->base_href, mc->href->data))
+  if (! svn_urlpath__is_ancestor(mc->base_href, mc->href->data))
     {
       /* ### need something better than APR_EGENERAL */
       return svn_error_createf(APR_EGENERAL, NULL,
@@ -262,7 +269,7 @@ static svn_error_t * handle_resource(merge_ctx_t *mc,
     }
 
   /* given HREF of the form: BASE "/" RELATIVE, extract the relative portion */
-  relative = svn_path_is_child(mc->base_href, mc->href->data, NULL);
+  relative = svn_urlpath__is_child(mc->base_href, mc->href->data, NULL);
   if (! relative) /* the paths are equal */
     relative = "";
 
@@ -676,7 +683,11 @@ svn_error_t * svn_ra_neon__assemble_locktoken_body(svn_stringbuf_t **body,
 }
 
 
-
+/* ### FIXME: As of HTTPv2, this isn't necessarily merging an
+   ### "activity".  It might be merging a transaction.  So,
+   ### ACTIVITY_URL might be a transaction root URL, not an actual
+   ### activity URL, etc.  Probably should rename ACTIVITY_URL to
+   ### MERGE_RESOURCE_URL or something.  */
 svn_error_t * svn_ra_neon__merge_activity(svn_revnum_t *new_rev,
                                           const char **committed_date,
                                           const char **committed_author,

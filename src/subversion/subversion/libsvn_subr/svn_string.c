@@ -1,31 +1,41 @@
 /*
- * svn_string.h:  routines to manipulate counted-length strings
+ * svn_string.c:  routines to manipulate counted-length strings
  *                (svn_stringbuf_t and svn_string_t) and C strings.
  *
  *
  * ====================================================================
- * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
 
 
+#include <apr.h>
+
 #include <string.h>      /* for memcpy(), memcmp(), strlen() */
 #include <apr_lib.h>     /* for apr_isspace() */
 #include <apr_fnmatch.h>
 #include "svn_string.h"  /* loads "svn_types.h" and <apr_pools.h> */
 #include "svn_ctype.h"
+#include "private/svn_dep_compat.h"
+#include "private/svn_string_private.h"
 
+#include "svn_private_config.h"
 
 
 /* Our own realloc, since APR doesn't have one.  Note: this is a
@@ -79,7 +89,7 @@ string_first_non_whitespace(const char *str, apr_size_t len)
 
   for (i = 0; i < len; i++)
     {
-      if (! apr_isspace(str[i]))
+      if (! svn_ctype_isspace(str[i]))
         return i;
     }
 
@@ -105,6 +115,10 @@ find_char_backward(const char *str, apr_size_t len, char ch)
 
 /* svn_string functions */
 
+/* Return a new svn_string_t object, allocated in POOL, initialized with
+ * DATA and SIZE.  Do not copy the contents of DATA, just store the pointer.
+ * SIZE is the length in bytes of DATA, excluding the required NUL
+ * terminator. */
 static svn_string_t *
 create_string(const char *data, apr_size_t size,
               apr_pool_t *pool)
@@ -122,9 +136,18 @@ create_string(const char *data, apr_size_t size,
 svn_string_t *
 svn_string_ncreate(const char *bytes, apr_size_t size, apr_pool_t *pool)
 {
+  void *mem;
   char *data;
+  svn_string_t *new_string;
 
-  data = apr_palloc(pool, size + 1);
+  /* Allocate memory for svn_string_t and data in one chunk. */
+  mem = apr_palloc(pool, sizeof(*new_string) + size + 1);
+  data = (char*)mem + sizeof(*new_string);
+
+  new_string = mem;
+  new_string->data = data;
+  new_string->len = size;
+
   memcpy(data, bytes, size);
 
   /* Null termination is the convention -- even if we suspect the data
@@ -132,8 +155,7 @@ svn_string_ncreate(const char *bytes, apr_size_t size, apr_pool_t *pool)
      call.  Heck, that's why they call it the caller! */
   data[size] = '\0';
 
-  /* wrap an svn_string_t around the new data */
-  return create_string(data, size, pool);
+  return new_string;
 }
 
 
@@ -214,12 +236,42 @@ svn_string_find_char_backward(const svn_string_t *str, char ch)
   return find_char_backward(str->data, str->len, ch);
 }
 
+svn_string_t *
+svn_stringbuf__morph_into_string(svn_stringbuf_t *strbuf)
+{
+  /* In debug mode, detect attempts to modify the original STRBUF object.
+   */
+#ifdef SVN_DEBUG
+  strbuf->pool = NULL;
+  strbuf->blocksize = strbuf->len;
+#endif
+
+  /* Both, svn_string_t and svn_stringbuf_t are public API structures
+   * since a couple of releases now. Thus, we can rely on their precise
+   * layout not to change.
+   *
+   * It just so happens that svn_string_t is structurally equivalent
+   * to the (data, len) sub-set of svn_stringbuf_t. There is also no
+   * difference in alignment and padding. So, we can just re-interpret
+   * that part of STRBUF as a svn_string_t.
+   *
+   * However, since svn_string_t does not know about the blocksize
+   * member in svn_stringbuf_t, any attempt to re-size the returned
+   * svn_string_t might invalidate the STRBUF struct. Hence, we consider
+   * the source STRBUF "consumed".
+   *
+   * Modifying the string character content is fine, though.
+   */
+  return (svn_string_t *)&strbuf->data;
+}
+
 
 
 /* svn_stringbuf functions */
 
 static svn_stringbuf_t *
-create_stringbuf(char *data, apr_size_t size, apr_size_t blocksize, apr_pool_t *pool)
+create_stringbuf(char *data, apr_size_t size, apr_size_t blocksize,
+                 apr_pool_t *pool)
 {
   svn_stringbuf_t *new_string;
 
@@ -236,20 +288,36 @@ create_stringbuf(char *data, apr_size_t size, apr_size_t blocksize, apr_pool_t *
 svn_stringbuf_t *
 svn_stringbuf_create_ensure(apr_size_t blocksize, apr_pool_t *pool)
 {
-  char *data = apr_palloc(pool, ++blocksize); /* + space for '\0' */
+  void *mem;
+  svn_stringbuf_t *new_string;
 
-  data[0] = '\0';
+  /* apr_palloc will allocate multiples of 8.
+   * Thus, we would waste some of that memory if we stuck to the
+   * smaller size. Note that this is safe even if apr_palloc would
+   * use some other aligment or none at all. */
 
-  /* wrap an svn_stringbuf_t around the new data buffer. */
-  return create_stringbuf(data, 0, blocksize, pool);
+  ++blocksize; /* + space for '\0' */
+  blocksize = APR_ALIGN_DEFAULT(blocksize);
+
+  /* Allocate memory for svn_string_t and data in one chunk. */
+  mem = apr_palloc(pool, sizeof(*new_string) + blocksize);
+
+  /* Initialize header and string */
+  new_string = mem;
+
+  new_string->data = (char*)mem + sizeof(*new_string);
+  new_string->data[0] = '\0';
+  new_string->len = 0;
+  new_string->blocksize = blocksize;
+  new_string->pool = pool;
+
+  return new_string;
 }
 
 svn_stringbuf_t *
 svn_stringbuf_ncreate(const char *bytes, apr_size_t size, apr_pool_t *pool)
 {
-  /* Ensure string buffer of size + 1 */
   svn_stringbuf_t *strbuf = svn_stringbuf_create_ensure(size, pool);
-
   memcpy(strbuf->data, bytes, size);
 
   /* Null termination is the convention -- even if we suspect the data
@@ -354,12 +422,18 @@ svn_stringbuf_ensure(svn_stringbuf_t *str, apr_size_t minimum_size)
   if (str->blocksize < minimum_size)
     {
       if (str->blocksize == 0)
-        str->blocksize = minimum_size;
+        /* APR will increase odd allocation sizes to the next
+         * multiple for 8, for instance. Take advantage of that
+         * knowledge and allow for the extra size to be used. */
+        str->blocksize = APR_ALIGN_DEFAULT(minimum_size);
       else
         while (str->blocksize < minimum_size)
           {
+            /* str->blocksize is aligned;
+             * doubling it should keep it aligned */
             apr_size_t prev_size = str->blocksize;
             str->blocksize *= 2;
+
             /* check for apr_size_t overflow */
             if (prev_size > str->blocksize)
               {
@@ -374,6 +448,66 @@ svn_stringbuf_ensure(svn_stringbuf_t *str, apr_size_t minimum_size)
                                           the trailing nul */
                                        str->blocksize,
                                        str->pool);
+    }
+}
+
+
+/* WARNING - Optimized code ahead!
+ * This function has been hand-tuned for performance. Please read
+ * the comments below before modifying the code.
+ */
+void
+svn_stringbuf_appendbyte(svn_stringbuf_t *str, char byte)
+{
+  char *dest;
+  apr_size_t old_len = str->len;
+
+  /* In most cases, there will be pre-allocated memory left
+   * to just write the new byte at the end of the used section
+   * and terminate the string properly.
+   */
+  if (str->blocksize > old_len + 1)
+    {
+      /* The following read does not depend this write, so we
+       * can issue the write first to minimize register pressure:
+       * The value of old_len+1 is no longer needed; on most processors,
+       * dest[old_len+1] will be calculated implicitly as part of
+       * the addressing scheme.
+       */
+      str->len = old_len+1;
+
+      /* Since the compiler cannot be sure that *src->data and *src
+       * don't overlap, we read src->data *once* before writing
+       * to *src->data. Replacing dest with str->data would force
+       * the compiler to read it again after the first byte.
+       */
+      dest = str->data;
+
+      /* If not already available in a register as per ABI, load
+       * "byte" into the register (e.g. the one freed from old_len+1),
+       * then write it to the string buffer and terminate it properly.
+       *
+       * Including the "byte" fetch, all operations so far could be
+       * issued at once and be scheduled at the CPU's descression.
+       * Most likely, no-one will soon depend on the data that will be
+       * written in this function. So, no stalls there, either.
+       */
+      dest[old_len] = byte;
+      dest[old_len+1] = '\0';
+    }
+  else
+    {
+      /* we need to re-allocate the string buffer
+       * -> let the more generic implementation take care of that part
+       */
+
+      /* Depending on the ABI, "byte" is a register value. If we were
+       * to take its address directly, the compiler might decide to
+       * put in on the stack *unconditionally*, even if that would
+       * only be necessary for this block.
+       */
+      char b = byte;
+      svn_stringbuf_appendbytes(str, &b, 1);
     }
 }
 
@@ -454,7 +588,7 @@ svn_stringbuf_strip_whitespace(svn_stringbuf_t *str)
   str->blocksize -= offset;
 
   /* Now that we've trimmed the front, trim the end, wasting more RAM. */
-  while ((str->len > 0) && apr_isspace(str->data[str->len - 1]))
+  while ((str->len > 0) && svn_ctype_isspace(str->data[str->len - 1]))
     str->len--;
   str->data[str->len] = '\0';
 }
@@ -496,12 +630,12 @@ svn_cstring_split_append(apr_array_header_t *array,
     {
       if (chop_whitespace)
         {
-          while (apr_isspace(*p))
+          while (svn_ctype_isspace(*p))
             p++;
 
           {
             char *e = p + (strlen(p) - 1);
-            while ((e >= p) && (apr_isspace(*e)))
+            while ((e >= p) && (svn_ctype_isspace(*e)))
               e--;
             *(++e) = '\0';
           }
@@ -530,7 +664,7 @@ svn_cstring_split(const char *input,
 
 
 svn_boolean_t svn_cstring_match_glob_list(const char *str,
-                                          apr_array_header_t *list)
+                                          const apr_array_header_t *list)
 {
   int i;
 
@@ -539,6 +673,22 @@ svn_boolean_t svn_cstring_match_glob_list(const char *str,
       const char *this_pattern = APR_ARRAY_IDX(list, i, char *);
 
       if (apr_fnmatch(this_pattern, str, 0) == APR_SUCCESS)
+        return TRUE;
+    }
+
+  return FALSE;
+}
+
+svn_boolean_t
+svn_cstring_match_list(const char *str, const apr_array_header_t *list)
+{
+  int i;
+
+  for (i = 0; i < list->nelts; i++)
+    {
+      const char *this_str = APR_ARRAY_IDX(list, i, char *);
+
+      if (strcmp(this_str, str) == 0)
         return TRUE;
     }
 
@@ -598,4 +748,107 @@ svn_cstring_casecmp(const char *str1, const char *str2)
       if (cmp || !a || !b)
         return cmp;
     }
+}
+
+svn_error_t *
+svn_cstring_strtoui64(apr_uint64_t *n, const char *str,
+                      apr_uint64_t minval, apr_uint64_t maxval,
+                      int base)
+{
+  apr_int64_t val;
+  char *endptr;
+
+  /* We assume errno is thread-safe. */
+  errno = 0; /* APR-0.9 doesn't always set errno */
+
+  /* ### We're throwing away half the number range here.
+   * ### APR needs a apr_strtoui64() function. */
+  val = apr_strtoi64(str, &endptr, base);
+  if (errno == EINVAL || endptr == str || str[0] == '\0' || *endptr != '\0')
+    return svn_error_createf(SVN_ERR_INCORRECT_PARAMS, NULL,
+                             _("Could not convert '%s' into a number"),
+                             str);
+  if ((errno == ERANGE && (val == APR_INT64_MIN || val == APR_INT64_MAX)) ||
+      val < 0 || (apr_uint64_t)val < minval || (apr_uint64_t)val > maxval)
+    /* ### Mark this for translation when gettext doesn't choke on macros. */
+    return svn_error_createf(SVN_ERR_INCORRECT_PARAMS, NULL,
+                             "Number '%s' is out of range "
+                             "'[%" APR_UINT64_T_FMT ", %" APR_UINT64_T_FMT "]'",
+                             str, minval, maxval);
+  *n = val;
+  return SVN_NO_ERROR;
+}
+
+svn_error_t *
+svn_cstring_atoui64(apr_uint64_t *n, const char *str)
+{
+  return svn_error_trace(svn_cstring_strtoui64(n, str, 0,
+                                               APR_UINT64_MAX, 10));
+}
+
+svn_error_t *
+svn_cstring_atoui(unsigned int *n, const char *str)
+{
+  apr_uint64_t val;
+
+  SVN_ERR(svn_cstring_strtoui64(&val, str, 0, APR_UINT32_MAX, 10));
+  *n = (unsigned int)val;
+  return SVN_NO_ERROR;
+}
+
+svn_error_t *
+svn_cstring_strtoi64(apr_int64_t *n, const char *str,
+                     apr_int64_t minval, apr_int64_t maxval,
+                     int base)
+{
+  apr_int64_t val;
+  char *endptr;
+
+  /* We assume errno is thread-safe. */
+  errno = 0; /* APR-0.9 doesn't always set errno */
+
+  val = apr_strtoi64(str, &endptr, base);
+  if (errno == EINVAL || endptr == str || str[0] == '\0' || *endptr != '\0')
+    return svn_error_createf(SVN_ERR_INCORRECT_PARAMS, NULL,
+                             _("Could not convert '%s' into a number"),
+                             str);
+  if ((errno == ERANGE && (val == APR_INT64_MIN || val == APR_INT64_MAX)) ||
+      val < minval || val > maxval)
+    /* ### Mark this for translation when gettext doesn't choke on macros. */
+    return svn_error_createf(SVN_ERR_INCORRECT_PARAMS, NULL,
+                             "Number '%s' is out of range "
+                             "'[%" APR_INT64_T_FMT ", %" APR_INT64_T_FMT "]'",
+                             str, minval, maxval);
+  *n = val;
+  return SVN_NO_ERROR;
+}
+
+svn_error_t *
+svn_cstring_atoi64(apr_int64_t *n, const char *str)
+{
+  return svn_error_trace(svn_cstring_strtoi64(n, str, APR_INT64_MIN,
+                                              APR_INT64_MAX, 10));
+}
+
+svn_error_t *
+svn_cstring_atoi(int *n, const char *str)
+{
+  apr_int64_t val;
+
+  SVN_ERR(svn_cstring_strtoi64(&val, str, APR_INT32_MIN, APR_INT32_MAX, 10));
+  *n = (int)val;
+  return SVN_NO_ERROR;
+}
+
+
+apr_status_t
+svn__strtoff(apr_off_t *offset, const char *buf, char **end, int base)
+{
+#if !APR_VERSION_AT_LEAST(1,0,0)
+  errno = 0;
+  *offset = strtol(buf, end, base);
+  return APR_FROM_OS_ERROR(errno);
+#else
+  return apr_strtoff(offset, buf, end, base);
+#endif
 }

@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -54,8 +59,8 @@ extern "C" {
  * unless the instance is explicitly documented to allocate from a
  * pool in @a baton.
  */
-typedef svn_error_t *(svn_opt_subcommand_t)
-       (apr_getopt_t *os, void *baton, apr_pool_t *pool);
+typedef svn_error_t *(svn_opt_subcommand_t)(
+  apr_getopt_t *os, void *baton, apr_pool_t *pool);
 
 
 /** The maximum number of aliases a subcommand can have. */
@@ -159,7 +164,7 @@ svn_opt_get_canonical_subcommand(const svn_opt_subcommand_desc_t *table,
 /**
  * Return pointer to an @c apr_getopt_option_t for the option whose
  * option code is @a code, or @c NULL if no match.  @a option_table must end
- * with an element whose every field is zero.  If @c command is non-NULL,
+ * with an element whose every field is zero.  If @a command is non-NULL,
  * then return the subcommand-specific option description instead of the
  * generic one, if a specific description is defined.
  *
@@ -287,6 +292,11 @@ svn_opt_format_option(const char **string,
  * command name or an alias.  ### @todo Why does this only print to
  * @c stdout, whereas svn_opt_print_generic_help() gives us a choice?
  *
+ * When printing the description of an option, if the same option code
+ * appears a second time in @a options_table with a different name, then
+ * use that second name as an alias for the first name.  This additional
+ * behaviour is new in 1.7.
+ *
  * @since New in 1.5.
  */
 void
@@ -360,6 +370,8 @@ enum svn_opt_revision_kind {
 
   /** repository youngest */
   svn_opt_revision_head
+
+  /* please update svn_opt__revision_to_string() when extending this enum */
 };
 
 /**
@@ -510,7 +522,7 @@ SVN_DEPRECATED
 svn_error_t *
 svn_opt_args_to_target_array3(apr_array_header_t **targets_p,
                               apr_getopt_t *os,
-                              apr_array_header_t *known_targets,
+                              const apr_array_header_t *known_targets,
                               apr_pool_t *pool);
 
 /**
@@ -526,7 +538,7 @@ SVN_DEPRECATED
 svn_error_t *
 svn_opt_args_to_target_array2(apr_array_header_t **targets_p,
                               apr_getopt_t *os,
-                              apr_array_header_t *known_targets,
+                              const apr_array_header_t *known_targets,
                               apr_pool_t *pool);
 
 
@@ -548,7 +560,7 @@ SVN_DEPRECATED
 svn_error_t *
 svn_opt_args_to_target_array(apr_array_header_t **targets_p,
                              apr_getopt_t *os,
-                             apr_array_header_t *known_targets,
+                             const apr_array_header_t *known_targets,
                              svn_opt_revision_t *start_revision,
                              svn_opt_revision_t *end_revision,
                              svn_boolean_t extract_revisions,
@@ -604,31 +616,31 @@ svn_opt_parse_all_args(apr_array_header_t **args_p,
                        apr_pool_t *pool);
 
 /**
- * Parse a working-copy or URL in @a path, extracting any trailing
+ * Parse a working-copy path or URL in @a path, extracting any trailing
  * revision specifier of the form "@rev" from the last component of
  * the path.
  *
  * Some examples would be:
  *
- *    "foo/bar"                      -> "foo/bar",       (unspecified)
- *    "foo/bar@13"                   -> "foo/bar",       (number, 13)
- *    "foo/bar@HEAD"                 -> "foo/bar",       (head)
- *    "foo/bar@{1999-12-31}"         -> "foo/bar",       (date, 1999-12-31)
- *    "http://a/b@27"                -> "http://a/b",    (number, 27)
- *    "http://a/b@COMMITTED"         -> "http://a/b",    (committed) [*]
- *    "http://a/b@{1999-12-31}       -> "http://a/b",    (date, 1999-12-31)
- *    "http://a/b@%7B1999-12-31%7D   -> "http://a/b",    (date, 1999-12-31)
- *    "foo/bar@1:2"                  -> error
- *    "foo/bar@baz"                  -> error
- *    "foo/bar@"                     -> "foo/bar",       (base)
- *    "foo/@bar@"                    -> "foo/@bar",      (base)
- *    "foo/bar/@13"                  -> "foo/bar/",      (number, 13)
- *    "foo/bar@@13"                  -> "foo/bar@",      (number, 13)
- *    "foo/@bar@HEAD"                -> "foo/@bar",      (head)
- *    "foo@/bar"                     -> "foo@/bar",      (unspecified)
- *    "foo@HEAD/bar"                 -> "foo@HEAD/bar",  (unspecified)
- *    "@foo/bar"                     -> error
- *    "@foo/bar@"                    -> "@foo/bar",      (unspecified)
+ *   - "foo/bar"                      -> "foo/bar",       (unspecified)
+ *   - "foo/bar@13"                   -> "foo/bar",       (number, 13)
+ *   - "foo/bar@HEAD"                 -> "foo/bar",       (head)
+ *   - "foo/bar@{1999-12-31}"         -> "foo/bar",       (date, 1999-12-31)
+ *   - "http://a/b@27"                -> "http://a/b",    (number, 27)
+ *   - "http://a/b@COMMITTED"         -> "http://a/b",    (committed) [*]
+ *   - "http://a/b@{1999-12-31}"      -> "http://a/b",    (date, 1999-12-31)
+ *   - "http://a/b@%7B1999-12-31%7D"  -> "http://a/b",    (date, 1999-12-31)
+ *   - "foo/bar@1:2"                  -> error
+ *   - "foo/bar@baz"                  -> error
+ *   - "foo/bar@"                     -> "foo/bar",       (unspecified)
+ *   - "foo/@bar@"                    -> "foo/@bar",      (unspecified)
+ *   - "foo/bar/@13"                  -> "foo/bar/",      (number, 13)
+ *   - "foo/bar@@13"                  -> "foo/bar@",      (number, 13)
+ *   - "foo/@bar@HEAD"                -> "foo/@bar",      (head)
+ *   - "foo@/bar"                     -> "foo@/bar",      (unspecified)
+ *   - "foo@HEAD/bar"                 -> "foo@HEAD/bar",  (unspecified)
+ *   - "@foo/bar"                     -> "@foo/bar",      (unspecified)
+ *   - "@foo/bar@"                    -> "@foo/bar",      (unspecified)
  *
  *   [*] Syntactically valid but probably not semantically useful.
  *

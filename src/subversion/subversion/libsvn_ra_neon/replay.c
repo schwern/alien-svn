@@ -2,17 +2,22 @@
  * replay.c :  routines for replaying revisions
  *
  * ====================================================================
- * Copyright (c) 2005-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -20,11 +25,13 @@
 #include "svn_pools.h"
 #include "svn_xml.h"
 
+#include "private/svn_string_private.h"
+
 #include "../libsvn_ra/ra_loader.h"
 
 #include "ra_neon.h"
 
-typedef struct {
+typedef struct replay_baton_t {
   /* The underlying editor and baton we're replaying into. */
   const svn_delta_editor_t *editor;
   void *edit_baton;
@@ -60,7 +67,7 @@ typedef struct {
                                    dir_item_t))
 
 /* Info about a given directory we've seen. */
-typedef struct {
+typedef struct dir_item_t {
   void *baton;
   const char *path;
   apr_pool_t *pool;
@@ -384,14 +391,13 @@ end_element(void *baton, int state, const char *nspace, const char *elt_name)
     case ELEM_change_dir_prop:
       {
         const svn_string_t *decoded_value;
-        svn_string_t prop;
 
         if (rb->prop_accum)
           {
-            prop.data = rb->prop_accum->data;
-            prop.len = rb->prop_accum->len;
+            const svn_string_t *prop;
 
-            decoded_value = svn_base64_decode_string(&prop, rb->prop_pool);
+            prop = svn_stringbuf__morph_into_string(rb->prop_accum);
+            decoded_value = svn_base64_decode_string(prop, rb->prop_pool);
           }
         else
           decoded_value = NULL; /* It's a delete */

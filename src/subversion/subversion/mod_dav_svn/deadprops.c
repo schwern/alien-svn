@@ -2,17 +2,22 @@
  * deadprops.c: mod_dav_svn dead property provider functions for Subversion
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -49,8 +54,7 @@ struct dav_db {
 
 
 struct dav_deadprop_rollback {
-  dav_prop_name name;
-  svn_string_t value;
+  int dummy;
 };
 
 
@@ -105,21 +109,48 @@ get_value(dav_db *db, const dav_prop_name *name, svn_string_t **pvalue)
 
   /* ### if db->props exists, then try in there first */
 
-  /* Working Baseline, Baseline, or (Working) Version resource */
+  /* We've got three different types of properties (node, txn, and
+     revision), and we've got two different protocol versions to deal
+     with.  Let's try to make some sense of this, shall we?
+
+        HTTP v1:
+          working baseline ('wbl') resource        -> txn prop change
+          non-working, baselined resource ('bln')  -> rev prop change [*]
+          working, non-baselined resource ('wrk')  -> node prop change
+
+        HTTP v2:
+          transaction resource ('txn')             -> txn prop change
+          revision resource ('rev')                -> rev prop change
+          transaction root resource ('txr')        -> node prop change
+
+     [*] This is a violation of the DeltaV spec (### see issue #916).
+
+  */
+
   if (db->resource->baselined)
-    if (db->resource->type == DAV_RESOURCE_TYPE_WORKING)
+    {
+      if (db->resource->type == DAV_RESOURCE_TYPE_WORKING)
+        serr = svn_fs_txn_prop(pvalue, db->resource->info->root.txn,
+                               propname, db->p);
+      else
+        serr = svn_repos_fs_revision_prop(pvalue,
+                                          db->resource->info-> repos->repos,
+                                          db->resource->info->root.rev,
+                                          propname, db->authz_read_func,
+                                          db->authz_read_baton, db->p);
+    }
+  else if (db->resource->info->restype == DAV_SVN_RESTYPE_TXN_COLLECTION)
+    {
       serr = svn_fs_txn_prop(pvalue, db->resource->info->root.txn,
                              propname, db->p);
-    else
-      serr = svn_repos_fs_revision_prop(pvalue,
-                                        db->resource->info-> repos->repos,
-                                        db->resource->info->root.rev, propname,
-                                        db->authz_read_func,
-                                        db->authz_read_baton, db->p);
+    }
   else
-    serr = svn_fs_node_prop(pvalue, db->resource->info->root.root,
-                            get_repos_path(db->resource->info),
-                            propname, db->p);
+    {
+      serr = svn_fs_node_prop(pvalue, db->resource->info->root.root,
+                              get_repos_path(db->resource->info),
+                              propname, db->p);
+    }
+
   if (serr != NULL)
     return dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,
                                 "could not fetch a property",
@@ -130,10 +161,13 @@ get_value(dav_db *db, const dav_prop_name *name, svn_string_t **pvalue)
 
 
 static dav_error *
-save_value(dav_db *db, const dav_prop_name *name, const svn_string_t *value)
+save_value(dav_db *db, const dav_prop_name *name,
+           const svn_string_t *const *old_value_p,
+           const svn_string_t *value)
 {
   const char *propname;
   svn_error_t *serr;
+  const dav_resource *resource = db->resource;
 
   /* get the repos-local name */
   get_repos_propname(db, name, &propname);
@@ -144,47 +178,88 @@ save_value(dav_db *db, const dav_prop_name *name, const svn_string_t *value)
         /* ignore the unknown namespace of the incoming prop. */
         propname = name->name;
       else
-        return dav_new_error(db->p, HTTP_CONFLICT, 0,
-                             "Properties may only be defined in the "
-                             SVN_DAV_PROP_NS_SVN " and " SVN_DAV_PROP_NS_CUSTOM
-                             " namespaces.");
+        return dav_svn__new_error(db->p, HTTP_CONFLICT, 0,
+                                  "Properties may only be defined in the "
+                                  SVN_DAV_PROP_NS_SVN " and "
+                                  SVN_DAV_PROP_NS_CUSTOM " namespaces.");
     }
 
-  /* Working Baseline or Working (Version) Resource */
-  if (db->resource->baselined)
-    if (db->resource->working)
-      serr = svn_repos_fs_change_txn_prop(db->resource->info->root.txn,
-                                          propname, value, db->resource->pool);
-    else
-      {
-        /* ### VIOLATING deltaV: you can't proppatch a baseline, it's
-           not a working resource!  But this is how we currently
-           (hackily) allow the svn client to change unversioned rev
-           props.  See issue #916. */
-        serr = svn_repos_fs_change_rev_prop3
-          (db->resource->info->repos->repos,
-           db->resource->info->root.rev,
-           db->resource->info->repos->username,
-           propname, value, TRUE, TRUE,
-           db->authz_read_func,
-           db->authz_read_baton,
-           db->resource->pool);
+  /* We've got three different types of properties (node, txn, and
+     revision), and we've got two different protocol versions to deal
+     with.  Let's try to make some sense of this, shall we?
 
-        /* Tell the logging subsystem about the revprop change. */
-        dav_svn__operational_log(db->resource->info,
-                                 svn_log__change_rev_prop(
-                                              db->resource->info->root.rev,
-                                              propname,
-                                              db->resource->pool));
-      }
+        HTTP v1:
+          working baseline ('wbl') resource        -> txn prop change
+          non-working, baselined resource ('bln')  -> rev prop change [*]
+          working, non-baselined resource ('wrk')  -> node prop change
+
+        HTTP v2:
+          transaction resource ('txn')             -> txn prop change
+          revision resource ('rev')                -> rev prop change
+          transaction root resource ('txr')        -> node prop change
+
+     [*] This is a violation of the DeltaV spec (### see issue #916).
+
+  */
+
+  if (db->resource->baselined)
+    {
+      if (db->resource->working)
+        {
+          serr = svn_repos_fs_change_txn_prop(resource->info->root.txn,
+                                              propname, value,
+                                              resource->pool);
+        }
+      else
+        {
+          serr = svn_repos_fs_change_rev_prop4(resource->info->repos->repos,
+                                               resource->info->root.rev,
+                                               resource->info->repos->username,
+                                               propname, old_value_p, value,
+                                               TRUE, TRUE,
+                                               db->authz_read_func,
+                                               db->authz_read_baton,
+                                               resource->pool);
+
+          /* Prepare any hook failure message to get sent over the wire */
+          if (serr)
+            {
+              svn_error_t *purged_serr = svn_error_purge_tracing(serr);
+              if (purged_serr->apr_err == SVN_ERR_REPOS_HOOK_FAILURE)
+                purged_serr->message = apr_xml_quote_string
+                                         (purged_serr->pool,
+                                          purged_serr->message, 1);
+
+              /* mod_dav doesn't handle the returned error very well, it
+                 generates its own generic error that will be returned to
+                 the client.  Cache the detailed error here so that it can
+                 be returned a second time when the rollback mechanism
+                 triggers. */
+              resource->info->revprop_error = svn_error_dup(purged_serr);
+            }
+
+          /* Tell the logging subsystem about the revprop change. */
+          dav_svn__operational_log(resource->info,
+                                   svn_log__change_rev_prop(
+                                      resource->info->root.rev,
+                                      propname, resource->pool));
+        }
+    }
+  else if (resource->info->restype == DAV_SVN_RESTYPE_TXN_COLLECTION)
+    {
+      serr = svn_repos_fs_change_txn_prop(resource->info->root.txn,
+                                          propname, value, resource->pool);
+    }
   else
-    serr = svn_repos_fs_change_node_prop(db->resource->info->root.root,
-                                         get_repos_path(db->resource->info),
-                                         propname, value, db->resource->pool);
+    {
+      serr = svn_repos_fs_change_node_prop(resource->info->root.root,
+                                           get_repos_path(resource->info),
+                                           propname, value, resource->pool);
+    }
+
   if (serr != NULL)
     return dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,
-                                NULL,
-                                db->resource->pool);
+                                NULL, resource->pool);
 
   /* a change to the props was made; make sure our cached copy is gone */
   db->props = NULL;
@@ -202,12 +277,16 @@ db_open(apr_pool_t *p,
   dav_db *db;
   dav_svn__authz_read_baton *arb;
 
-  /* Some resource types do not have deadprop databases. Specifically:
-     REGULAR, VERSION, and WORKING resources have them. (SVN does not
-     have WORKSPACE resources, and isn't covered here) */
+  /* Some resource types do not have deadprop databases.
+     Specifically: REGULAR, VERSION, WORKING, and our custom
+     transaction and transaction root resources have them. (SVN does
+     not have WORKSPACE resources, and isn't covered here.) */
+
   if (resource->type == DAV_RESOURCE_TYPE_HISTORY
       || resource->type == DAV_RESOURCE_TYPE_ACTIVITY
-      || resource->type == DAV_RESOURCE_TYPE_PRIVATE)
+      || (resource->type == DAV_RESOURCE_TYPE_PRIVATE
+          && resource->info->restype != DAV_SVN_RESTYPE_TXN_COLLECTION
+          && resource->info->restype != DAV_SVN_RESTYPE_TXNROOT_COLLECTION))
     {
       *pdb = NULL;
       return NULL;
@@ -215,16 +294,19 @@ db_open(apr_pool_t *p,
 
   /* If the DB is being opened R/W, and this isn't a working resource, then
      we have a problem! */
-  if (!ro && resource->type != DAV_RESOURCE_TYPE_WORKING)
+  if ((! ro)
+      && resource->type != DAV_RESOURCE_TYPE_WORKING
+      && resource->type != DAV_RESOURCE_TYPE_PRIVATE
+      && resource->info->restype != DAV_SVN_RESTYPE_TXN_COLLECTION)
     {
       /* ### Exception: in violation of deltaV, we *are* allowing a
          baseline resource to receive a proppatch, as a way of
          changing unversioned rev props.  Remove this someday: see IZ #916. */
       if (! (resource->baselined
              && resource->type == DAV_RESOURCE_TYPE_VERSION))
-        return dav_new_error(p, HTTP_CONFLICT, 0,
-                             "Properties may only be changed on working "
-                             "resources.");
+        return dav_svn__new_error(p, HTTP_CONFLICT, 0,
+                                  "Properties may only be changed on working "
+                                  "resources.");
     }
 
   db = apr_pcalloc(p, sizeof(*db));
@@ -314,7 +396,7 @@ db_output_value(dav_db *db,
           const svn_string_t *enc_propval
             = svn_base64_encode_string2(propval, TRUE, pool);
           xml_safe = enc_propval->data;
-          encoding = apr_pstrcat(pool, " V:encoding=\"base64\"", NULL);
+          encoding = " V:encoding=\"base64\"";
         }
       else
         {
@@ -349,23 +431,17 @@ db_map_namespaces(dav_db *db,
 
 
 static dav_error *
-db_store(dav_db *db,
-         const dav_prop_name *name,
-         const apr_xml_elem *elem,
-         dav_namespace_map *mapping)
+decode_property_value(const svn_string_t **out_propval_p,
+                      svn_boolean_t *absent,
+                      const svn_string_t *maybe_encoded_propval,
+                      const apr_xml_elem *elem,
+                      apr_pool_t *pool)
 {
-  const svn_string_t *propval;
-  apr_pool_t *pool = db->p;
   apr_xml_attr *attr = elem->attr;
 
-  /* SVN sends property values as a big blob of bytes. Thus, there should be
-     no child elements of the property-name element. That also means that
-     the entire contents of the blob is located in elem->first_cdata. The
-     dav_xml_get_cdata() will figure it all out for us, but (normally) it
-     should be awfully fast and not need to copy any data. */
-
-  propval = svn_string_create
-    (dav_xml_get_cdata(elem, pool, 0 /* strip_white */), pool);
+  /* Default: no "encoding" attribute. */
+  *absent = FALSE;
+  *out_propval_p = maybe_encoded_propval;
 
   /* Check for special encodings of the property value. */
   while (attr)
@@ -376,17 +452,86 @@ db_store(dav_db *db,
 
           /* Handle known encodings here. */
           if (enc_type && (strcmp(enc_type, "base64") == 0))
-            propval = svn_base64_decode_string(propval, pool);
+            *out_propval_p = svn_base64_decode_string(maybe_encoded_propval,
+                                                      pool);
           else
-            return dav_new_error(pool, HTTP_INTERNAL_SERVER_ERROR, 0,
-                                 "Unknown property encoding");
+            return dav_svn__new_error(pool, HTTP_INTERNAL_SERVER_ERROR, 0,
+                                      "Unknown property encoding");
           break;
         }
+
+      if (strcmp(attr->name, SVN_DAV__OLD_VALUE__ABSENT) == 0)
+        {
+          /* ### parse attr->value */
+          *absent = TRUE;
+          *out_propval_p = NULL;
+        }
+
       /* Next attribute, please. */
       attr = attr->next;
     }
 
-  return save_value(db, name, propval);
+  return NULL;
+}
+
+static dav_error *
+db_store(dav_db *db,
+         const dav_prop_name *name,
+         const apr_xml_elem *elem,
+         dav_namespace_map *mapping)
+{
+  const svn_string_t *const *old_propval_p;
+  const svn_string_t *old_propval;
+  const svn_string_t *propval;
+  svn_boolean_t absent;
+  apr_pool_t *pool = db->p;
+  dav_error *derr;
+
+  /* SVN sends property values as a big blob of bytes. Thus, there should be
+     no child elements of the property-name element. That also means that
+     the entire contents of the blob is located in elem->first_cdata. The
+     dav_xml_get_cdata() will figure it all out for us, but (normally) it
+     should be awfully fast and not need to copy any data. */
+
+  propval = svn_string_create
+    (dav_xml_get_cdata(elem, pool, 0 /* strip_white */), pool);
+
+  derr = decode_property_value(&propval, &absent, propval, elem, pool);
+  if (derr)
+    return derr;
+
+  if (absent && ! elem->first_child)
+    /* ### better error check */
+    return dav_svn__new_error(pool, HTTP_INTERNAL_SERVER_ERROR, 0,
+                              apr_psprintf(pool,
+                                           "'%s' cannot be specified on the "
+                                           "value without specifying an "
+                                           "expectation",
+                                           SVN_DAV__OLD_VALUE__ABSENT));
+
+  /* ### namespace check? */
+  if (elem->first_child && !strcmp(elem->first_child->name, SVN_DAV__OLD_VALUE))
+    {
+      const char *propname;
+
+      get_repos_propname(db, name, &propname);
+
+      /* Parse OLD_PROPVAL. */
+      old_propval = svn_string_create(dav_xml_get_cdata(elem->first_child, pool,
+                                                        0 /* strip_white */),
+                                      pool);
+      derr = decode_property_value(&old_propval, &absent,
+                                   old_propval, elem->first_child, pool);
+      if (derr)
+        return derr;
+
+      old_propval_p = (const svn_string_t *const *) &old_propval;
+    }
+  else
+    old_propval_p = NULL;
+
+
+  return save_value(db, name, old_propval_p, propval);
 }
 
 
@@ -413,10 +558,10 @@ db_remove(dav_db *db, const dav_prop_name *name)
          not a working resource!  But this is how we currently
          (hackily) allow the svn client to change unversioned rev
          props.  See issue #916. */
-      serr = svn_repos_fs_change_rev_prop3(db->resource->info->repos->repos,
+      serr = svn_repos_fs_change_rev_prop4(db->resource->info->repos->repos,
                                            db->resource->info->root.rev,
                                            db->resource->info->repos->username,
-                                           propname, NULL, TRUE, TRUE,
+                                           propname, NULL, NULL, TRUE, TRUE,
                                            db->authz_read_func,
                                            db->authz_read_baton,
                                            db->resource->pool);
@@ -598,19 +743,14 @@ db_get_rollback(dav_db *db,
                 const dav_prop_name *name,
                 dav_deadprop_rollback **prollback)
 {
-  dav_error *err;
-  dav_deadprop_rollback *ddp;
-  svn_string_t *propval;
+  /* This gets called by mod_dav in preparation for a revprop change.
+     mod_dav_svn doesn't need to make any changes during rollback, but
+     we want the rollback mechanism to trigger.  Making changes in
+     response to post-revprop-change hook errors would be positively
+     wrong. */
 
-  if ((err = get_value(db, name, &propval)) != NULL)
-    return err;
+  *prollback = apr_palloc(db->p, sizeof(dav_deadprop_rollback));
 
-  ddp = apr_palloc(db->p, sizeof(*ddp));
-  ddp->name = *name;
-  ddp->value.data = propval ? propval->data : NULL;
-  ddp->value.len = propval ? propval->len : 0;
-
-  *prollback = ddp;
   return NULL;
 }
 
@@ -618,12 +758,20 @@ db_get_rollback(dav_db *db,
 static dav_error *
 db_apply_rollback(dav_db *db, dav_deadprop_rollback *rollback)
 {
-  if (rollback->value.data == NULL)
-    {
-      return db_remove(db, &rollback->name);
-    }
+  dav_error *derr;
 
-  return save_value(db, &rollback->name, &rollback->value);
+  if (! db->resource->info->revprop_error)
+    return NULL;
+
+  /* Returning the original revprop change error here will cause this
+     detailed error to get returned to the client in preference to the
+     more generic error created by mod_dav. */
+  derr = dav_svn__convert_err(db->resource->info->revprop_error,
+                              HTTP_INTERNAL_SERVER_ERROR, NULL,
+                              db->resource->pool);
+  db->resource->info->revprop_error = NULL;
+
+  return derr;
 }
 
 

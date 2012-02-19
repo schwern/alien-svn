@@ -2,17 +2,22 @@
  * getlocations.c :  entry point for get_locations RA functions for ra_serf
  *
  * ====================================================================
- * Copyright (c) 2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -20,20 +25,15 @@
 
 #include <apr_uri.h>
 
-#include <expat.h>
-
 #include <serf.h>
 
+#include "svn_path.h"
 #include "svn_pools.h"
 #include "svn_ra.h"
-#include "svn_dav.h"
 #include "svn_xml.h"
-#include "../libsvn_ra/ra_loader.h"
-#include "svn_config.h"
-#include "svn_delta.h"
-#include "svn_version.h"
-#include "svn_path.h"
 #include "svn_private_config.h"
+
+#include "../libsvn_ra/ra_loader.h"
 
 #include "ra_serf.h"
 
@@ -41,9 +41,9 @@
 /*
  * This enum represents the current state of our XML parsing for a REPORT.
  */
-typedef enum {
+typedef enum loc_state_e {
   REPORT,
-  LOCATION,
+  LOCATION
 } loc_state_e;
 
 typedef struct loc_state_list_t {
@@ -54,9 +54,14 @@ typedef struct loc_state_list_t {
   struct loc_state_list_t *prev;
 } loc_state_list_t;
 
-typedef struct {
+typedef struct loc_context_t {
   /* pool to allocate memory from */
   apr_pool_t *pool;
+
+  /* parameters set by our caller */
+  const char *path;
+  const apr_array_header_t *location_revisions;
+  svn_revnum_t peg_revision;
 
   /* Returned location hash */
   apr_hash_t *paths;
@@ -64,9 +69,6 @@ typedef struct {
   /* Current state we're in */
   loc_state_list_t *state;
   loc_state_list_t *free_state;
-
-  /* Return error code */
-  svn_error_t *error;
 
   int status_code;
 
@@ -173,69 +175,85 @@ end_getloc(svn_ra_serf__xml_parser_t *parser,
   return SVN_NO_ERROR;
 }
 
-svn_error_t *
-svn_ra_serf__get_locations(svn_ra_session_t *ra_session,
-                           apr_hash_t **locations,
-                           const char *path,
-                           svn_revnum_t peg_revision,
-                           apr_array_header_t *location_revisions,
-                           apr_pool_t *pool)
+/* Implements svn_ra_serf__request_body_delegate_t */
+static svn_error_t *
+create_get_locations_body(serf_bucket_t **body_bkt,
+                          void *baton,
+                          serf_bucket_alloc_t *alloc,
+                          apr_pool_t *pool)
 {
-  loc_context_t *loc_ctx;
-  svn_ra_serf__session_t *session = ra_session->priv;
-  svn_ra_serf__handler_t *handler;
-  svn_ra_serf__xml_parser_t *parser_ctx;
   serf_bucket_t *buckets;
-  const char *relative_url, *basecoll_url, *req_url;
+  loc_context_t *loc_ctx = baton;
   int i;
-  svn_error_t *err;
 
-  loc_ctx = apr_pcalloc(pool, sizeof(*loc_ctx));
-  loc_ctx->pool = pool;
-  loc_ctx->error = SVN_NO_ERROR;
-  loc_ctx->done = FALSE;
-  loc_ctx->paths = apr_hash_make(loc_ctx->pool);
+  buckets = serf_bucket_aggregate_create(alloc);
 
-  *locations = loc_ctx->paths;
-
-  buckets = serf_bucket_aggregate_create(session->bkt_alloc);
-
-  svn_ra_serf__add_open_tag_buckets(buckets, session->bkt_alloc,
+  svn_ra_serf__add_open_tag_buckets(buckets, alloc,
                                     "S:get-locations",
                                     "xmlns:S", SVN_XML_NAMESPACE,
                                     "xmlns:D", "DAV:",
                                     NULL);
 
   svn_ra_serf__add_tag_buckets(buckets,
-                               "S:path", path,
-                               session->bkt_alloc);
+                               "S:path", loc_ctx->path,
+                               alloc);
 
   svn_ra_serf__add_tag_buckets(buckets,
-                               "S:peg-revision", apr_ltoa(pool, peg_revision),
-                               session->bkt_alloc);
+                               "S:peg-revision", apr_ltoa(pool, loc_ctx->peg_revision),
+                               alloc);
 
-  for (i = 0; i < location_revisions->nelts; i++)
+  for (i = 0; i < loc_ctx->location_revisions->nelts; i++)
     {
-      svn_revnum_t rev = APR_ARRAY_IDX(location_revisions, i, svn_revnum_t);
+      svn_revnum_t rev = APR_ARRAY_IDX(loc_ctx->location_revisions, i, svn_revnum_t);
       svn_ra_serf__add_tag_buckets(buckets,
                                    "S:location-revision", apr_ltoa(pool, rev),
-                                   session->bkt_alloc);
+                                   alloc);
     }
 
-  svn_ra_serf__add_close_tag_buckets(buckets, session->bkt_alloc,
+  svn_ra_serf__add_close_tag_buckets(buckets, alloc,
                                      "S:get-locations");
+
+  *body_bkt = buckets;
+  return SVN_NO_ERROR;
+}
+
+svn_error_t *
+svn_ra_serf__get_locations(svn_ra_session_t *ra_session,
+                           apr_hash_t **locations,
+                           const char *path,
+                           svn_revnum_t peg_revision,
+                           const apr_array_header_t *location_revisions,
+                           apr_pool_t *pool)
+{
+  loc_context_t *loc_ctx;
+  svn_ra_serf__session_t *session = ra_session->priv;
+  svn_ra_serf__handler_t *handler;
+  svn_ra_serf__xml_parser_t *parser_ctx;
+  const char *relative_url, *basecoll_url, *req_url;
+  svn_error_t *err;
+
+  loc_ctx = apr_pcalloc(pool, sizeof(*loc_ctx));
+  loc_ctx->pool = pool;
+  loc_ctx->path = path;
+  loc_ctx->peg_revision = peg_revision;
+  loc_ctx->location_revisions = location_revisions;
+  loc_ctx->done = FALSE;
+  loc_ctx->paths = apr_hash_make(loc_ctx->pool);
+
+  *locations = loc_ctx->paths;
 
   SVN_ERR(svn_ra_serf__get_baseline_info(&basecoll_url, &relative_url, session,
                                          NULL, NULL, peg_revision, NULL,
                                          pool));
 
-  req_url = svn_path_url_add_component(basecoll_url, relative_url, pool);
+  req_url = svn_path_url_add_component2(basecoll_url, relative_url, pool);
 
   handler = apr_pcalloc(pool, sizeof(*handler));
 
   handler->method = "REPORT";
   handler->path = req_url;
-  handler->body_buckets = buckets;
+  handler->body_delegate = create_get_locations_body;
+  handler->body_delegate_baton = loc_ctx;
   handler->body_type = "text/xml";
   handler->conn = session->conns[0];
   handler->session = session;
@@ -256,15 +274,11 @@ svn_ra_serf__get_locations(svn_ra_session_t *ra_session,
 
   err = svn_ra_serf__context_run_wait(&loc_ctx->done, session, pool);
 
-  if (loc_ctx->error || parser_ctx->error)
-    {
-      svn_error_clear(err);
-      err = SVN_NO_ERROR;
-      SVN_ERR(loc_ctx->error);
-      SVN_ERR(parser_ctx->error);
-    }
+  SVN_ERR(svn_error_compose_create(
+              svn_ra_serf__error_on_status(loc_ctx->status_code,
+                                           req_url,
+                                           parser_ctx->location),
+              err));
 
-  SVN_ERR(svn_ra_serf__error_on_status(loc_ctx->status_code, req_url));
-
-  return err;
+  return SVN_NO_ERROR;
 }

@@ -1,4 +1,24 @@
 #!/usr/bin/env python
+#
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#
 
 # Usage: svnmucc-test.py [build-dir-top [base-url]]
 
@@ -13,6 +33,10 @@ this_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 # add the Subversion Python test suite libraries to the path, and import
 sys.path.insert(0, '%s/../../../subversion/tests/cmdline' % (this_dir))
 import svntest
+
+# setup the global 'svntest.main.options' object so functions in the
+# module don't freak out.
+svntest.main._parse_options(arglist=[])
 
 # calculate the top of the build tree
 if len(sys.argv) > 1:
@@ -255,30 +279,44 @@ def main():
   run_svnmucc(['M /foo/bar'], #---------
               'propdel', 'testprop', 'foo/bar')
 
+  # revision 18
+  run_svnmucc(['M /foo/z.c',
+               'M /foo/foo',
+               ], #---------
+              'propset', 'testprop', 'true', 'foo/z.c',
+              'propset', 'testprop', 'true', 'foo/foo')
+
+  # revision 19
+  run_svnmucc(['M /foo/z.c',
+               'M /foo/foo',
+               ], #---------
+              'propsetf', 'testprop', sys.argv[0], 'foo/z.c',
+              'propsetf', 'testprop', sys.argv[0], 'foo/foo')
+
   # Expected missing revision error
-  xrun_svnmucc(['svnmucc: \'a\' is not a revision'
+  xrun_svnmucc(["svnmucc: E200004: 'a' is not a revision"
                 ], #---------
               'cp', 'a', 'b')
 
   # Expected cannot be younger error
-  xrun_svnmucc(['svnmucc: Copy source revision cannot be younger ' +
+  xrun_svnmucc(['svnmucc: E205000: Copy source revision cannot be younger ' +
                 'than base revision',
                 ], #---------
               'cp', '42', 'a', 'b')
 
   # Expected already exists error
-  xrun_svnmucc(["svnmucc: 'foo' already exists",
+  xrun_svnmucc(["svnmucc: E125002: 'foo' already exists",
                 ], #---------
               'cp', '17', 'a', 'foo')
 
   # Expected copy_src already exists error
-  xrun_svnmucc(["svnmucc: 'a/bar' (from 'foo/bar:17') already exists",
+  xrun_svnmucc(["svnmucc: E125002: 'a/bar' (from 'foo/bar:17') already exists",
                 ], #---------
               'cp', '17', 'foo', 'a',
               'cp', '17', 'foo/foo', 'a/bar')
 
   # Expected not found error
-  xrun_svnmucc(['svnmucc: \'a\' not found',
+  xrun_svnmucc(["svnmucc: E125002: 'a' not found",
                 ], #---------
               'cp', '17', 'a', 'b')
 
@@ -318,4 +356,4 @@ if __name__ == "__main__":
       shutil.rmtree(repos_path)
   except:
     pass
-  print "SUCCESS!"
+  print("SUCCESS!")

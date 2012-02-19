@@ -1,16 +1,21 @@
 /*
  * ====================================================================
- * Copyright (c) 2000-2006, 2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  *
  * svn_delta.i: SWIG interface file for svn_delta.h
@@ -167,6 +172,60 @@ svn_txdelta_window_t_ops_get(svn_txdelta_window_t *window)
 %}
 #endif
 
+#ifdef SWIGPYTHON
+%ignore svn_txdelta_window_t::ops;
+%inline %{
+static PyObject *
+svn_txdelta_window_t_ops_get(PyObject *window_ob)
+{
+  void *window;
+  PyObject *ops_list, *window_pool;
+  int status;
+  
+  /* Kludge alert!
+     Normally, these kinds of conversions would belong in a typemap.
+     However, typemaps won't allow us to change the result type to an array,
+     so we have to make this custom accessor function.
+     A cleaner approach would be to use something like: 
+     
+     %extend svn_txdelta_window_t { void get_ops(apr_array_header_t ** ops); }
+     
+     But that means unnecessary copying, plus more hacks to get the pool for the
+     array and for wrapping the individual op objects. So we just don't bother.
+  */
+  
+  /* Note: the standard svn-python typemap releases the GIL while calling the
+     wrapped function, but this function does Python stuff, so we have to
+     reacquire it again. */
+  svn_swig_py_acquire_py_lock();
+  status = svn_swig_ConvertPtr(window_ob, &window,
+    SWIG_TypeQuery("svn_txdelta_window_t *"));
+    
+  if (status != 0)
+    {
+      PyErr_SetString(PyExc_TypeError,
+                      "expected an svn_txdelta_window_t* proxy");
+      svn_swig_py_release_py_lock();
+      return NULL;
+    }
+    
+  window_pool = PyObject_GetAttrString(window_ob, "_parent_pool");
+
+  if (window_pool == NULL)
+    {
+      svn_swig_py_release_py_lock();
+      return NULL;
+    }
+    
+  ops_list = svn_swig_py_txdelta_window_t_ops_get(window,
+    SWIG_TypeQuery("svn_txdelta_op_t *"), window_pool);
+    
+  svn_swig_py_release_py_lock();
+  
+  return ops_list;
+}
+%}
+#endif
 
 %include svn_delta_h.swg
 

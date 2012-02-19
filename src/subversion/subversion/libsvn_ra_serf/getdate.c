@@ -2,17 +2,22 @@
  * getdate.c :  entry point for get_dated_revision for ra_serf
  *
  * ====================================================================
- * Copyright (c) 2006-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -26,17 +31,14 @@
 
 #include "svn_pools.h"
 #include "svn_ra.h"
-#include "svn_dav.h"
-#include "svn_xml.h"
-#include "../libsvn_ra/ra_loader.h"
-#include "svn_config.h"
-#include "svn_delta.h"
-#include "svn_version.h"
-#include "svn_path.h"
 #include "svn_time.h"
+#include "svn_xml.h"
 
 #include "private/svn_dav_protocol.h"
+
 #include "svn_private_config.h"
+
+#include "../libsvn_ra/ra_loader.h"
 
 #include "ra_serf.h"
 
@@ -44,18 +46,18 @@
 /*
  * This enum represents the current state of our XML parsing for a REPORT.
  */
-typedef enum {
+typedef enum date_state_e {
   NONE = 0,
-  VERSION_NAME,
+  VERSION_NAME
 } date_state_e;
 
-typedef struct {
+typedef struct date_info_t {
   /* The currently collected value as we build it up */
   const char *tmp;
   apr_size_t tmp_len;
 } date_info_t;
 
-typedef struct {
+typedef struct date_context_t {
   apr_pool_t *pool;
 
   /* The time asked about. */
@@ -159,8 +161,10 @@ cdata_getdate(svn_ra_serf__xml_parser_t *parser,
   return SVN_NO_ERROR;
 }
 
-static serf_bucket_t*
-create_getdate_body(void *baton,
+/* Implements svn_ra_serf__request_body_delegate_t */
+static svn_error_t *
+create_getdate_body(serf_bucket_t **body_bkt,
+                    void *baton,
                     serf_bucket_alloc_t *alloc,
                     apr_pool_t *pool)
 {
@@ -181,7 +185,8 @@ create_getdate_body(void *baton,
 
   svn_ra_serf__add_close_tag_buckets(buckets, alloc, "S:dated-rev-report");
 
-  return buckets;
+  *body_bkt = buckets;
+  return SVN_NO_ERROR;
 }
 
 svn_error_t *
@@ -194,7 +199,7 @@ svn_ra_serf__get_dated_revision(svn_ra_session_t *ra_session,
   svn_ra_serf__session_t *session = ra_session->priv;
   svn_ra_serf__handler_t *handler;
   svn_ra_serf__xml_parser_t *parser_ctx;
-  const char *vcc_url;
+  const char *report_target;
   int status_code;
 
   date_ctx = apr_pcalloc(pool, sizeof(*date_ctx));
@@ -203,14 +208,12 @@ svn_ra_serf__get_dated_revision(svn_ra_session_t *ra_session,
   date_ctx->revision = revision;
   date_ctx->done = FALSE;
 
-  SVN_ERR(svn_ra_serf__discover_root(&vcc_url, NULL,
-                                     session, session->conns[0],
-                                     session->repos_url.path, pool));
+  SVN_ERR(svn_ra_serf__report_resource(&report_target, session, NULL, pool));
 
   handler = apr_pcalloc(pool, sizeof(*handler));
 
   handler->method = "REPORT";
-  handler->path = vcc_url;
+  handler->path = report_target;
   handler->body_type = "text/xml";
   handler->conn = session->conns[0];
   handler->session = session;

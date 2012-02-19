@@ -1,3 +1,22 @@
+dnl ===================================================================
+dnl   Licensed to the Apache Software Foundation (ASF) under one
+dnl   or more contributor license agreements.  See the NOTICE file
+dnl   distributed with this work for additional information
+dnl   regarding copyright ownership.  The ASF licenses this file
+dnl   to you under the Apache License, Version 2.0 (the
+dnl   "License"); you may not use this file except in compliance
+dnl   with the License.  You may obtain a copy of the License at
+dnl
+dnl     http://www.apache.org/licenses/LICENSE-2.0
+dnl
+dnl   Unless required by applicable law or agreed to in writing,
+dnl   software distributed under the License is distributed on an
+dnl   "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+dnl   KIND, either express or implied.  See the License for the
+dnl   specific language governing permissions and limitations
+dnl   under the License.
+dnl ===================================================================
+dnl
 dnl   SVN_LIB_SQLITE(minimum_ver, recommended_ver, url)
 dnl
 dnl   Search for a suitable version of sqlite.  minimum_ver is a
@@ -142,7 +161,7 @@ SQLITE_VERSION_OKAY
                         SVN_SQLITE_LIBS="-lsqlite3"
                       else
                         SVN_SQLITE_INCLUDES="-I$sqlite_dir/include"
-                        SVN_SQLITE_LIBS="-L$sqlite_dir/lib -lsqlite3"
+                        SVN_SQLITE_LIBS="`SVN_REMOVE_STANDARD_LIB_DIRS(-L$sqlite_dir/lib -lsqlite3)`"
                       fi
                   ])], [AC_MSG_RESULT([unsupported SQLite version])])
     ])
@@ -158,9 +177,11 @@ dnl at sqlite_file.  If not, fail.
 AC_DEFUN(SVN_SQLITE_FILE_CONFIG,
 [
   sqlite_amalg="$1"
+  AC_MSG_CHECKING([sqlite amalgamation])
   if test ! -e $sqlite_amalg; then
-    echo "amalgamation not found at $sqlite_amalg"
+    AC_MSG_RESULT([no])
   else
+    AC_MSG_RESULT([yes])
     AC_MSG_CHECKING([sqlite amalgamation file version])
     AC_EGREP_CPP(SQLITE_VERSION_OKAY,[
 #include "$sqlite_amalg"
@@ -171,6 +192,7 @@ SQLITE_VERSION_OKAY
                   AC_DEFINE(SVN_SQLITE_INLINE, 1,
                   [Defined if svn should use the amalgamated version of sqlite])
                   SVN_SQLITE_INCLUDES="-I`dirname $sqlite_amalg`"
+                  SVN_SQLITE_LIBS="-ldl -lpthread"
                   svn_lib_sqlite="yes"],
                  [AC_MSG_RESULT([unsupported amalgamation SQLite version])])
   fi
@@ -222,7 +244,6 @@ AC_DEFUN(SVN_DOWNLOAD_SQLITE,
   echo "unpack the archive using tar/gunzip and copy sqlite3.c from the"
   echo "resulting directory to:"
   echo "$abs_srcdir/sqlite-amalgamation/sqlite3.c"
-  echo "This file also ships as part of the subversion-deps distribution."
   echo ""
   AC_MSG_ERROR([Subversion requires SQLite])
 ])

@@ -1,24 +1,29 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2003-2004,2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  */
 
 package org.tigris.subversion.javahl;
 
-public class ChangePath implements java.io.Serializable
+public class ChangePath implements java.io.Serializable, Comparable
 {
     // Update the serialVersionUID when there is a incompatible change
     // made to this class.  See any of the following, depending upon
@@ -47,7 +52,27 @@ public class ChangePath implements java.io.Serializable
         this.nodeKind = nodeKind;
     }
 
-    /** Path of commited item */
+    /**
+     * A backward-compat constructor.
+     */
+    public ChangePath(org.apache.subversion.javahl.types.ChangePath aChangePath)
+    {
+        this(aChangePath.getPath(), aChangePath.getCopySrcRevision(),
+             aChangePath.getCopySrcPath(),
+              ((aChangePath.getAction() == org.apache.subversion.javahl.types.ChangePath.Action.add) ? 'A' :
+              ((aChangePath.getAction() == org.apache.subversion.javahl.types.ChangePath.Action.delete) ? 'D' :
+              ((aChangePath.getAction() == org.apache.subversion.javahl.types.ChangePath.Action.replace) ? 'R' :
+              ((aChangePath.getAction() == org.apache.subversion.javahl.types.ChangePath.Action.modify) ? 'M' :
+                ' ')))),
+             NodeKind.fromApache(aChangePath.getNodeKind()));
+    }
+
+    public int compareTo(Object other)
+    {
+        return path.compareTo(((ChangePath)other).path);
+    }
+
+    /** Path of committed item */
     private String path;
 
     /** Source revision of copy (if any). */
@@ -63,8 +88,8 @@ public class ChangePath implements java.io.Serializable
     private int nodeKind;
 
     /**
-     * Retrieve the path to the commited item
-     * @return  the path to the commited item
+     * Retrieve the path to the committed item
+     * @return  the path to the committed item
      */
     public String getPath()
     {

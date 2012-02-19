@@ -34,6 +34,10 @@ Invoke with one or more numeric arguments to run those particular tests:
 
    $ ./basic_tests.py 7 13 17
 
+Invoke with one or more function names to run those particular tests:
+
+   $ ./basic_tests.py basic_mkdir_wc_with_parents basic_switch basic_import
+
 And invoke with the "--list" option to list information about some or
 all tests available in that script:
 
@@ -68,7 +72,7 @@ paths adjusted appropriately:
      AuthUserFile /usr/local/apache2/conf/users
      Require valid-user
    </Location>
-     
+
    <Location /svn-test-work/local_tmp/repos>
      DAV svn
      SVNPath /home/yourusernamehere/projects/svn/subversion/tests/cmdline/svn-test-work/local_tmp/repos
@@ -78,6 +82,9 @@ paths adjusted appropriately:
      AuthUserFile /usr/local/apache2/conf/users
      Require valid-user
    </Location>
+
+   RedirectMatch permanent ^/svn-test-work/repositories/REDIRECT-PERM-(.*)$ /svn-test-work/repositories/$1
+   RedirectMatch           ^/svn-test-work/repositories/REDIRECT-TEMP-(.*)$ /svn-test-work/repositories/$1
 
 Httpd should be running on port 80.  You may also need to ensure that
 it's running as you, so it has read/write access to the repositories
@@ -134,6 +141,17 @@ Note [1]: It would be quite too much to expect those password entries
           ----------------------------
 
 
+[If you want to test with serf instead of neon:
+
+  $ ./basic_tests.py --url=http://localhost --http-library=serf
+
+  or
+
+  $ make check BASE_URL=http://localhost HTTP_LIBRARY=serf
+]
+
+
+
 Running over ra_svn
 -------------------
 
@@ -169,6 +187,34 @@ $ saslpasswd2 -c -u svntest jrandom
 $ saslpasswd2 -c -u svntest jconstant
 
 As usual, both users should use the password 'rayjandom'.
+
+
+Running tests in a RAM disk
+--------------------------
+
+Test execution can be dramatically sped up by keeping Subversion test
+data on a RAM disk. On a Linux system, you can mount a RAM disk on the
+fly with the command:
+
+ mount -t tmpfs tmpfs /path/to/src/subversion/tests/cmdline/svn-test-work \
+  -o uid=$USER,mode=770,size=32m
+
+Or, for a more permanent solution, add lines like the following in your
+/etc/fstab file:
+
+ tmpfs /path/to/src/svn/subversion/tests/cmdline/svn-test-work tmpfs defaults,user,noauto,exec,size=32m
+
+The minimum required size for testing ramdisk is approximately 700MB.
+However, flagging your test targets for cleanup dramatically reduces
+the space requirements (as shown in the example configuration above),
+and thus your memory usage. Cleanup means more I/O, but since test
+data is in-memory, there will be no performance degradation. Example:
+
+  make check CLEANUP=true 
+
+See http://svn.haxx.se/dev/archive-2003-02/0068.shtml for the original
+authoritative discussion on use of RAM disks.
+
 
 Directory Contents
 ==================

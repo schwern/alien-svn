@@ -1,6 +1,6 @@
 ## Example configuration file for svnperms.py. ##
 
-# $Id: svnperms.conf.example 855994 2005-08-25 22:56:40Z niemeyer $
+# $Id: svnperms.conf.example 1028289 2010-10-28 13:20:45Z cmpilato $
 #
 # Multiple global [groups] sections are accepted, but be aware
 # that it's the same as concatenating them all in a single entry.
@@ -9,6 +9,8 @@
 #
 [groups]
 group1 = user1 user2 user3
+group2 = user4 user5
+supergroup = @group1 @group2 user6
 
 #
 # Example repository control, showing allowed syntax.
@@ -20,13 +22,13 @@ group1 = user1 user2 user3
 # - line breaks are accepted
 #
 [example1 groups]
-group2 = user9 user10
+group3 = user9 user10
 
 [example1]
 trunk/.* = *(add,remove,update) @group1,user4,user5(update)
            user6,user7()
 trunk/.* = user8(add,update)
-tags/[^/]+/ = @group2(add)
+tags/[^/]+/ = @group3(add)
 branches/[^/]+/.* = *(add,remove,update)
 
 #

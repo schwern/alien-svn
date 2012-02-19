@@ -2,17 +2,22 @@
  * config-test.c:  tests svn_config
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -94,25 +99,17 @@ static const char *config_values[] = { "bar", "Aa", "100", "bar",
                                        "Aa 100", NULL };
 
 static svn_error_t *
-test_text_retrieval(const char **msg,
-                    svn_boolean_t msg_only,
-                    svn_test_opts_t *opts,
-                    apr_pool_t *pool)
+test_text_retrieval(apr_pool_t *pool)
 {
   svn_config_t *cfg;
   int i;
   const char *cfg_file;
 
-  *msg = "test svn_config";
-
-  if (msg_only)
-    return SVN_NO_ERROR;
-
   if (!srcdir)
     SVN_ERR(init_params(pool));
 
-  cfg_file = apr_pstrcat(pool, srcdir, "/", "config-test.cfg", NULL);
-  SVN_ERR(svn_config_read(&cfg, cfg_file, TRUE, pool));
+  cfg_file = apr_pstrcat(pool, srcdir, "/", "config-test.cfg", (char *)NULL);
+  SVN_ERR(svn_config_read2(&cfg, cfg_file, TRUE, FALSE, pool));
 
   /* Test values retrieved from our ConfigParser instance against
      values retrieved using svn_config. */
@@ -153,25 +150,17 @@ static const char *false_keys[] = {"false1", "false2", "false3", "false4",
                                    NULL};
 
 static svn_error_t *
-test_boolean_retrieval(const char **msg,
-                       svn_boolean_t msg_only,
-                       svn_test_opts_t *opts,
-                       apr_pool_t *pool)
+test_boolean_retrieval(apr_pool_t *pool)
 {
   svn_config_t *cfg;
   int i;
   const char *cfg_file;
 
-  *msg = "test svn_config boolean conversion";
-
-  if (msg_only)
-    return SVN_NO_ERROR;
-
   if (!srcdir)
     SVN_ERR(init_params(pool));
 
-  cfg_file = apr_pstrcat(pool, srcdir, "/", "config-test.cfg", NULL);
-  SVN_ERR(svn_config_read(&cfg, cfg_file, TRUE, pool));
+  cfg_file = apr_pstrcat(pool, srcdir, "/", "config-test.cfg", (char *)NULL);
+  SVN_ERR(svn_config_read2(&cfg, cfg_file, TRUE, FALSE, pool));
 
   for (i = 0; true_keys[i] != NULL; i++)
     {
@@ -222,24 +211,16 @@ test_boolean_retrieval(const char **msg,
 }
 
 static svn_error_t *
-test_has_section(const char **msg,
-                 svn_boolean_t msg_only,
-                 svn_test_opts_t *opts,
-                 apr_pool_t *pool)
+test_has_section(apr_pool_t *pool)
 {
   svn_config_t *cfg;
   const char *cfg_file;
 
-  *msg = "test svn_config_has_section";
-
-  if (msg_only)
-    return SVN_NO_ERROR;
-
   if (!srcdir)
     SVN_ERR(init_params(pool));
 
-  cfg_file = apr_pstrcat(pool, srcdir, "/", "config-test.cfg", NULL);
-  SVN_ERR(svn_config_read(&cfg, cfg_file, TRUE, pool));
+  cfg_file = apr_pstrcat(pool, srcdir, "/", "config-test.cfg", (char *)NULL);
+  SVN_ERR(svn_config_read2(&cfg, cfg_file, TRUE, FALSE, pool));
 
   if (! svn_config_has_section(cfg, "section1"))
     return fail(pool, "Failed to find section1");
@@ -261,8 +242,11 @@ test_has_section(const char **msg,
 struct svn_test_descriptor_t test_funcs[] =
   {
     SVN_TEST_NULL,
-    SVN_TEST_PASS(test_text_retrieval),
-    SVN_TEST_PASS(test_boolean_retrieval),
-    SVN_TEST_PASS(test_has_section),
+    SVN_TEST_PASS2(test_text_retrieval,
+                   "test svn_config"),
+    SVN_TEST_PASS2(test_boolean_retrieval,
+                   "test svn_config boolean conversion"),
+    SVN_TEST_PASS2(test_has_section,
+                   "test svn_config_has_section"),
     SVN_TEST_NULL
   };

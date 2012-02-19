@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2003-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -24,6 +29,7 @@
 
 #include <string>
 #include <jni.h>
+#include "Pool.h"
 struct svn_error_t;
 
 /**
@@ -42,7 +48,7 @@ class Path
    *
    * @param pi_path Path string
    */
-  void init(const char *pi_path);
+  void init(const char *pi_path, SVN::Pool &in_pool);
 
  public:
   /**
@@ -52,7 +58,7 @@ class Path
    *
    * @param pi_path Path string
    */
-  Path(const std::string &pi_path = "");
+  Path(const std::string &pi_path, SVN::Pool &in_pool);
 
   /**
    * Constructor
@@ -60,14 +66,14 @@ class Path
    * @see Path::Path (const std::string &)
    * @param pi_path Path string
    */
-  Path(const char *pi_path);
+  Path(const char *pi_path, SVN::Pool &in_pool);
 
   /**
    * Copy constructor
    *
    * @param pi_path Path to be copied
    */
-  Path(const Path &pi_path);
+  Path(const Path &pi_path, SVN::Pool &in_pool);
 
   /**
    * Assignment operator

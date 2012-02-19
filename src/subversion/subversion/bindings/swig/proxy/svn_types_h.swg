@@ -3,6 +3,7 @@
 
 /* No default constructors for opaque structs */
 #ifdef SWIGPYTHON
+%nodefault svn_version_t;
 #endif
 
 /* Callback typemaps */
@@ -42,6 +43,7 @@
 /* Structure definitions */
 #ifdef SWIGPYTHON
 %proxy(svn_error_t);
+%opaque_proxy(svn_version_t);
 %proxy(svn_dirent_t);
 %proxy(svn_commit_info_t);
 %proxy(svn_log_changed_path2_t);

@@ -1,17 +1,22 @@
 /* authz.c : path-based access control
  *
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -23,10 +28,12 @@
 
 #include "svn_pools.h"
 #include "svn_error.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_repos.h"
 #include "svn_config.h"
 #include "svn_ctype.h"
+#include "private/svn_fspath.h"
 
 
 /*** Structures. ***/
@@ -50,9 +57,9 @@ struct authz_lookup_baton {
 
   /* The following are used exclusively in recursive lookups. */
 
-  /* The path in the repository to authorize. */
+  /* The path in the repository (an fspath) to authorize. */
   const char *repos_path;
-  /* repos_path prefixed by the repository name. */
+  /* repos_path prefixed by the repository name and a colon. */
   const char *qualified_repos_path;
 
   /* Whether, at the end of a recursive lookup, access is granted. */
@@ -269,6 +276,23 @@ authz_parse_line(const char *name, const char *value,
 }
 
 
+/* Return TRUE iff the access rules in SECTION_NAME apply to PATH_SPEC
+ * (which is a repository name, colon, and repository fspath, such as
+ * "myrepos:/trunk/foo").
+ */
+static svn_boolean_t
+is_applicable_section(const char *path_spec,
+                      const char *section_name)
+{
+  apr_size_t path_spec_len = strlen(path_spec);
+
+  return ((strncmp(path_spec, section_name, path_spec_len) == 0)
+          && (path_spec[path_spec_len - 1] == '/'
+              || section_name[path_spec_len] == '/'
+              || section_name[path_spec_len] == '\0'));
+}
+
+
 /* Callback to parse a section and update the authz_baton if the
  * section denies access to the subtree the baton describes.
  */
@@ -279,10 +303,10 @@ authz_parse_section(const char *section_name, void *baton, apr_pool_t *pool)
   svn_boolean_t conclusive;
 
   /* Does the section apply to us? */
-  if (svn_path_is_ancestor(b->qualified_repos_path,
-                           section_name) == FALSE
-      && svn_path_is_ancestor(b->repos_path,
-                              section_name) == FALSE)
+  if (is_applicable_section(b->qualified_repos_path,
+                            section_name) == FALSE
+      && is_applicable_section(b->repos_path,
+                               section_name) == FALSE)
     return TRUE;
 
   /* Work out what this section grants. */
@@ -327,7 +351,7 @@ authz_get_path_access(svn_config_t *cfg, const char *repos_name,
   baton.user = user;
 
   /* Try to locate a repository-specific block first. */
-  qualified_path = apr_pstrcat(pool, repos_name, ":", path, NULL);
+  qualified_path = apr_pstrcat(pool, repos_name, ":", path, (char *)NULL);
   svn_config_enumerate2(cfg, qualified_path,
                         authz_parse_line, &baton, pool);
 
@@ -370,7 +394,7 @@ authz_get_tree_access(svn_config_t *cfg, const char *repos_name,
   baton.required_access = required_access;
   baton.repos_path = path;
   baton.qualified_repos_path = apr_pstrcat(pool, repos_name,
-                                           ":", path, NULL);
+                                           ":", path, (char *)NULL);
   /* Default to access granted if no rules say otherwise. */
   baton.access = TRUE;
 
@@ -385,15 +409,15 @@ authz_get_tree_access(svn_config_t *cfg, const char *repos_name,
    any kind of granted access.  Implements the
    svn_config_section_enumerator2_t interface. */
 static svn_boolean_t
-authz_global_parse_section(const char *section_name, void *baton,
-                           apr_pool_t *pool)
+authz_get_any_access_parser_cb(const char *section_name, void *baton,
+                               apr_pool_t *pool)
 {
   struct authz_lookup_baton *b = baton;
 
   /* Does the section apply to the query? */
   if (section_name[0] == '/'
-      || strncmp(section_name, b->repos_path,
-                 strlen(b->repos_path)) == 0)
+      || strncmp(section_name, b->qualified_repos_path,
+                 strlen(b->qualified_repos_path)) == 0)
     {
       b->allow = b->deny = svn_authz_none;
 
@@ -416,10 +440,10 @@ authz_global_parse_section(const char *section_name, void *baton,
  * to any path within the REPOSITORY.  Return TRUE if so.  Use POOL
  * for temporary allocations. */
 static svn_boolean_t
-authz_get_global_access(svn_config_t *cfg, const char *repos_name,
-                        const char *user,
-                        svn_repos_authz_access_t required_access,
-                        apr_pool_t *pool)
+authz_get_any_access(svn_config_t *cfg, const char *repos_name,
+                     const char *user,
+                     svn_repos_authz_access_t required_access,
+                     apr_pool_t *pool)
 {
   struct authz_lookup_baton baton = { 0 };
 
@@ -427,9 +451,16 @@ authz_get_global_access(svn_config_t *cfg, const char *repos_name,
   baton.user = user;
   baton.required_access = required_access;
   baton.access = FALSE; /* Deny access by default. */
-  baton.repos_path = apr_pstrcat(pool, repos_name, ":/", NULL);
+  baton.repos_path = "/";
+  baton.qualified_repos_path = apr_pstrcat(pool, repos_name,
+                                           ":/", (char *)NULL);
 
-  svn_config_enumerate_sections2(cfg, authz_global_parse_section,
+  /* We could have used svn_config_enumerate2 for "repos_name:/".
+   * However, this requires access for root explicitly (which the user
+   * may not always have). So we end up enumerating the sections in
+   * the authz CFG and stop on the first match with some access for
+   * this user. */
+  svn_config_enumerate_sections2(cfg, authz_get_any_access_parser_cb,
                                  &baton, pool);
 
   /* If walking the configuration was inconclusive, deny access. */
@@ -715,7 +746,7 @@ svn_repos_authz_read(svn_authz_t **authz_p, const char *file,
   baton.err = SVN_NO_ERROR;
 
   /* Load the rule file. */
-  SVN_ERR(svn_config_read(&authz->cfg, file, must_exist, pool));
+  SVN_ERR(svn_config_read2(&authz->cfg, file, must_exist, TRUE, pool));
   baton.config = authz->cfg;
 
   /* Step through the entire rule file, stopping on error. */
@@ -735,18 +766,26 @@ svn_repos_authz_check_access(svn_authz_t *authz, const char *repos_name,
                              svn_boolean_t *access_granted,
                              apr_pool_t *pool)
 {
-  const char *current_path = path;
+  const char *current_path;
 
-  /* If PATH is NULL, do a global access lookup. */
+  if (!repos_name)
+    repos_name = "";
+
+  /* If PATH is NULL, check if the user has *any* access. */
   if (!path)
     {
-      *access_granted = authz_get_global_access(authz->cfg, repos_name,
-                                                user, required_access,
-                                                pool);
+      *access_granted = authz_get_any_access(authz->cfg, repos_name,
+                                             user, required_access, pool);
       return SVN_NO_ERROR;
     }
 
+  /* Sanity check. */
+  SVN_ERR_ASSERT(path[0] == '/');
+
   /* Determine the granted access for the requested path. */
+  path = svn_fspath__canonicalize(path, pool);
+  current_path = path;
+
   while (!authz_get_path_access(authz->cfg, repos_name,
                                 current_path, user,
                                 required_access,
@@ -763,7 +802,7 @@ svn_repos_authz_check_access(svn_authz_t *authz, const char *repos_name,
         }
 
       /* Work back to the parent path. */
-      svn_path_split(current_path, &current_path, NULL, pool);
+      current_path = svn_fspath__dirname(current_path, pool);
     }
 
   /* If the caller requested recursive access, we need to walk through

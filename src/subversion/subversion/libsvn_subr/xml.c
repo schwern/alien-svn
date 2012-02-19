@@ -2,17 +2,22 @@
  * xml.c:  xml helper code shared among the Subversion libraries.
  *
  * ====================================================================
- * Copyright (c) 2000-2006, 2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -296,7 +301,8 @@ svn_xml_fuzzy_escape(const char *string, apr_pool_t *pool)
          ### should probably share code, even though they escape
          ### different characters.
       */
-      sprintf(escaped_char, "?\\%03u", (unsigned char) *q);
+      apr_snprintf(escaped_char, sizeof(escaped_char), "?\\%03u",
+                   (unsigned char) *q);
       svn_stringbuf_appendcstr(outstr, escaped_char);
 
       p = q + 1;
@@ -396,7 +402,7 @@ svn_xml_parse(svn_xml_parser_t *svn_parser,
   int success;
 
   /* Parse some xml data */
-  success = XML_Parse(svn_parser->parser, buf, len, is_final);
+  success = XML_Parse(svn_parser->parser, buf, (int) len, is_final);
 
   /* If expat choked internally, return its error. */
   if (! success)
@@ -468,12 +474,19 @@ svn_xml_get_attr_value(const char *name, const char **atts)
 /*** Printing XML ***/
 
 void
-svn_xml_make_header(svn_stringbuf_t **str, apr_pool_t *pool)
+svn_xml_make_header2(svn_stringbuf_t **str, const char *encoding,
+                     apr_pool_t *pool)
 {
+
   if (*str == NULL)
     *str = svn_stringbuf_create("", pool);
-  svn_stringbuf_appendcstr(*str,
-                           "<?xml version=\"1.0\"?>\n");
+  svn_stringbuf_appendcstr(*str, "<?xml version=\"1.0\"");
+  if (encoding)
+    {
+      encoding = apr_psprintf(pool, " encoding=\"%s\"", encoding);
+      svn_stringbuf_appendcstr(*str, encoding);
+    }
+  svn_stringbuf_appendcstr(*str, "?>\n");
 }
 
 

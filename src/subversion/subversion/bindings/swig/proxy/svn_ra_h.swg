@@ -265,8 +265,8 @@ static const svn_version_t * svn_ra_plugin_invoke_get_version(
 }
 
 static svn_error_t * svn_ra_invoke_get_wc_prop_func(
-  svn_ra_get_wc_prop_func_t _obj, void *baton, const char *relpath, const char *name, const svn_string_t **value, apr_pool_t *pool) {
-  return _obj(baton, relpath, name, value, pool);
+  svn_ra_get_wc_prop_func_t _obj, void *baton, const char *path, const char *name, const svn_string_t **value, apr_pool_t *pool) {
+  return _obj(baton, path, name, value, pool);
 }
 
 static svn_error_t * svn_ra_invoke_set_wc_prop_func(

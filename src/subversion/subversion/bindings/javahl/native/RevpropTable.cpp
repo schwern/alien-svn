@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -20,9 +25,9 @@
  */
 
 #include "RevpropTable.h"
-#include "Pool.h"
 #include "JNIUtil.h"
 #include "JNIStringHolder.h"
+#include "Array.h"
 #include <apr_tables.h>
 #include <apr_strings.h>
 #include <apr_hash.h>
@@ -36,20 +41,20 @@ RevpropTable::~RevpropTable()
     JNIUtil::getEnv()->DeleteLocalRef(m_revpropTable);
 }
 
-const apr_hash_t *RevpropTable::hash(const Pool &pool)
+const apr_hash_t *RevpropTable::hash(const SVN::Pool &pool)
 {
   if (m_revprops.size() == 0)
     return NULL;
 
-  apr_hash_t *revprop_table = apr_hash_make(pool.pool());
+  apr_hash_t *revprop_table = apr_hash_make(pool.getPool());
 
   std::map<std::string, std::string>::const_iterator it;
   for (it = m_revprops.begin(); it != m_revprops.end(); ++it)
     {
-      const char *propname = apr_pstrdup(pool.pool(), it->first.c_str());
+      const char *propname = apr_pstrdup(pool.getPool(), it->first.c_str());
       if (!svn_prop_name_is_valid(propname))
         {
-          const char *msg = apr_psprintf(pool.pool(),
+          const char *msg = apr_psprintf(pool.getPool(),
                                          "Invalid property name: '%s'",
                                          propname);
           JNIUtil::throwNativeException(JAVA_PACKAGE "/ClientException", msg,
@@ -58,7 +63,7 @@ const apr_hash_t *RevpropTable::hash(const Pool &pool)
         }
 
       svn_string_t *propval = svn_string_create(it->second.c_str(),
-                                                pool.pool());
+                                                pool.getPool());
 
       apr_hash_set(revprop_table, propname, APR_HASH_KEY_STRING, propval);
     }
@@ -89,21 +94,6 @@ RevpropTable::RevpropTable(jobject jrevpropTable)
       if (JNIUtil::isExceptionThrown())
         return;
 
-      jclass setClazz = env->FindClass("java/util/Set");
-
-      if (toArray == 0)
-        {
-          toArray = env->GetMethodID(setClazz, "toArray",
-                                    "()[Ljava/lang/Object;");
-          if (JNIUtil::isExceptionThrown())
-            return;
-        }
-
-      jobjectArray jkeyArray = (jobjectArray) env->CallObjectMethod(jkeySet,
-                                                                    toArray);
-      if (JNIUtil::isExceptionThrown())
-        return;
-
       if (get == 0)
         {
           get = env->GetMethodID(mapClazz, "get",
@@ -112,22 +102,17 @@ RevpropTable::RevpropTable(jobject jrevpropTable)
             return;
         }
 
-      jint arraySize = env->GetArrayLength(jkeyArray);
-      if (JNIUtil::isExceptionThrown())
-        return;
+      Array keyArray(jkeySet);
+      std::vector<jobject> keys = keyArray.vector();
 
-      for (int i = 0; i < arraySize; ++i)
+      for (std::vector<jobject>::const_iterator it = keys.begin();
+            it < keys.end(); ++it)
         {
-          jobject jpropname = env->GetObjectArrayElement(jkeyArray, i);
+          JNIStringHolder propname((jstring)*it);
           if (JNIUtil::isExceptionThrown())
             return;
 
-          JNIStringHolder propname((jstring)jpropname);
-          if (JNIUtil::isExceptionThrown())
-            return;
-
-          jobject jpropval = env->CallObjectMethod(jrevpropTable, get,
-                                                   jpropname);
+          jobject jpropval = env->CallObjectMethod(jrevpropTable, get, *it);
           if (JNIUtil::isExceptionThrown())
             return;
 
@@ -138,21 +123,9 @@ RevpropTable::RevpropTable(jobject jrevpropTable)
           m_revprops[std::string((const char *)propname)]
             = std::string((const char *)propval);
 
-          JNIUtil::getEnv()->DeleteLocalRef(jpropname);
-          if (JNIUtil::isExceptionThrown())
-            return;
-
           JNIUtil::getEnv()->DeleteLocalRef(jpropval);
-          if (JNIUtil::isExceptionThrown())
-            return;
         }
 
       JNIUtil::getEnv()->DeleteLocalRef(jkeySet);
-      if (JNIUtil::isExceptionThrown())
-        return;
-
-      JNIUtil::getEnv()->DeleteLocalRef(jkeyArray);
-      if (JNIUtil::isExceptionThrown())
-        return;
     }
 }

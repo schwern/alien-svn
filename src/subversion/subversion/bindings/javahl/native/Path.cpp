@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2003-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -31,9 +36,9 @@
  * @see Path::Path(const std::string &)
  * @param path Path string
  */
-Path::Path(const char *pi_path)
+Path::Path(const char *pi_path, SVN::Pool &in_pool)
 {
-  init(pi_path);
+  init(pi_path, in_pool);
 }
 
 /**
@@ -43,9 +48,9 @@ Path::Path(const char *pi_path)
  *
  * @param path Path string
  */
-Path::Path(const std::string &pi_path)
+Path::Path(const std::string &pi_path, SVN::Pool &in_pool)
 {
-  init(pi_path.c_str());
+  init(pi_path.c_str(), in_pool);
 }
 
 /**
@@ -53,9 +58,9 @@ Path::Path(const std::string &pi_path)
  *
  * @param path Path to be copied
  */
-Path::Path(const Path &pi_path)
+Path::Path(const Path &pi_path, SVN::Pool &in_pool)
 {
-  init(pi_path.c_str());
+  init(pi_path.c_str(), in_pool);
 }
 
 /**
@@ -64,7 +69,7 @@ Path::Path(const Path &pi_path)
  * @param path Path string
  */
 void
-Path::init(const char *pi_path)
+Path::init(const char *pi_path, SVN::Pool &in_pool)
 {
   if (*pi_path == 0)
     {
@@ -73,9 +78,7 @@ Path::init(const char *pi_path)
     }
   else
     {
-      m_error_occured =
-        JNIUtil::preprocessPath(pi_path,
-                                JNIUtil::getRequestPool()->pool() );
+      m_error_occured = JNIUtil::preprocessPath(pi_path, in_pool.getPool());
 
       m_path = pi_path;
     }
@@ -105,7 +108,9 @@ Path::c_str() const
 Path&
 Path::operator=(const Path &pi_path)
 {
-  init(pi_path.c_str());
+  m_error_occured = NULL;
+  m_path = pi_path.m_path;
+
   return *this;
 }
 
@@ -119,8 +124,8 @@ jboolean Path::isValid(const char *p)
   if (p == NULL)
     return JNI_FALSE;
 
-  Pool requestPool;
-  svn_error_t *err = svn_path_check_valid(p, requestPool.pool());
+  SVN::Pool requestPool;
+  svn_error_t *err = svn_path_check_valid(p, requestPool.getPool());
   if (err == SVN_NO_ERROR)
     {
       return JNI_TRUE;

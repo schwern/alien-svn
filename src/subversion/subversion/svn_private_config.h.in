@@ -3,6 +3,9 @@
 /* The fs type to use by default */
 #undef DEFAULT_FS_TYPE
 
+/* The http library to use by default */
+#undef DEFAULT_HTTP_LIBRARY
+
 /* Define to 1 if translation of program messages to the user's native
    language is requested. */
 #undef ENABLE_NLS
@@ -24,6 +27,9 @@
 
 /* Define to 1 if you have the `socket' library (-lsocket). */
 #undef HAVE_LIBSOCKET
+
+/* Define to 1 if you have the <magic.h> header file. */
+#undef HAVE_MAGIC_H
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
@@ -67,6 +73,10 @@
 /* Define to 1 if you have the <zlib.h> header file. */
 #undef HAVE_ZLIB_H
 
+/* Define to the sub-directory in which libtool stores uninstalled libraries.
+   */
+#undef LT_OBJDIR
+
 /* Define to the address where bug reports for this package should be sent. */
 #undef PACKAGE_BUGREPORT
 
@@ -100,6 +110,9 @@
 /* The path of a default editor for the client. */
 #undef SVN_CLIENT_EDITOR
 
+/* Defined if the full version matching rules are disabled */
+#undef SVN_DISABLE_FULL_VERSION_MATCH
+
 /* The desired major version for the Berkeley DB */
 #undef SVN_FS_WANT_DB_MAJOR
 
@@ -117,6 +130,9 @@
 
 /* Defined if KWallet support is enabled */
 #undef SVN_HAVE_KWALLET
+
+/* Defined if libmagic support is enabled */
+#undef SVN_HAVE_LIBMAGIC
 
 /* Defined if apr_memcache (standalone or in apr-util) is present */
 #undef SVN_HAVE_MEMCACHE
@@ -168,6 +184,9 @@
 
 /* Defined to be the path separator used on your local filesystem */
 #undef SVN_PATH_LOCAL_SEPARATOR
+
+/* Defined if support for GSSAPI is enabled */
+#undef SVN_RA_SERF_HAVE_GSSAPI
 
 /* Defined if svn should use the amalgamated version of sqlite */
 #undef SVN_SQLITE_INLINE

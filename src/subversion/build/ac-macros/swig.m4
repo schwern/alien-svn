@@ -1,3 +1,22 @@
+dnl ===================================================================
+dnl   Licensed to the Apache Software Foundation (ASF) under one
+dnl   or more contributor license agreements.  See the NOTICE file
+dnl   distributed with this work for additional information
+dnl   regarding copyright ownership.  The ASF licenses this file
+dnl   to you under the Apache License, Version 2.0 (the
+dnl   "License"); you may not use this file except in compliance
+dnl   with the License.  You may obtain a copy of the License at
+dnl
+dnl     http://www.apache.org/licenses/LICENSE-2.0
+dnl
+dnl   Unless required by applicable law or agreed to in writing,
+dnl   software distributed under the License is distributed on an
+dnl   "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+dnl   KIND, either express or implied.  See the License for the
+dnl   specific language governing permissions and limitations
+dnl   under the License.
+dnl ===================================================================
+dnl
 dnl check to see if SWIG is current enough.
 dnl
 dnl if it is, then check to see if we have the correct version of python.
@@ -36,7 +55,7 @@ AC_DEFUN(SVN_FIND_SWIG,
   where=$1
 
   if test $where = no; then
-    AC_PATH_PROG(SWIG, none, none)
+    SWIG=none
   elif test $where = check; then
     AC_PATH_PROG(SWIG, swig, none)
   else
@@ -73,15 +92,12 @@ AC_DEFUN(SVN_FIND_SWIG,
     #   packages/rpm/redhat-7.x/subversion.spec
     #   packages/rpm/rhel-3/subversion.spec
     #   packages/rpm/rhel-4/subversion.spec
-    if test -n "$SWIG_VERSION" &&
-       test "$SWIG_VERSION" -ge "103024" &&
-       test "$SWIG_VERSION" -le "103036"; then
+    if test -n "$SWIG_VERSION" && test "$SWIG_VERSION" -ge "103024"; then
       SWIG_SUITABLE=yes
     else
       SWIG_SUITABLE=no
       AC_MSG_WARN([Detected SWIG version $SWIG_VERSION_RAW])
-      AC_MSG_WARN([Subversion requires 1.3.24 or later, and is known to work])
-      AC_MSG_WARN([with versions up to 1.3.36])
+      AC_MSG_WARN([Subversion requires SWIG 1.3.24 or later])
     fi
   fi
  
@@ -112,7 +128,7 @@ AC_DEFUN(SVN_FIND_SWIG,
     AC_CACHE_CHECK([for linking Python libraries], [ac_cv_python_libs],[
       ac_cv_python_libs="`$PYTHON ${abs_srcdir}/build/get-py-info.py --libs`"
     ])
-    SWIG_PY_LIBS="$ac_cv_python_libs"
+    SWIG_PY_LIBS="`SVN_REMOVE_STANDARD_LIB_DIRS($ac_cv_python_libs)`"
 
     dnl Sun Forte adds an extra space before substituting APR_INT64_T_FMT
     dnl gcc-2.95 adds an extra space after substituting APR_INT64_T_FMT
@@ -168,7 +184,7 @@ AC_DEFUN(SVN_FIND_SWIG,
   if test "$RUBY" != "none"; then
     rbconfig="$RUBY -rrbconfig -e "
 
-    for var_name in arch archdir CC LDSHARED DLEXT LIBRUBYARG \
+    for var_name in arch archdir CC LDSHARED DLEXT LIBS LIBRUBYARG \
                     rubyhdrdir sitedir sitelibdir sitearchdir libdir
     do
       rbconfig_tmp=`$rbconfig "print Config::CONFIG@<:@'$var_name'@:>@"`
@@ -190,7 +206,7 @@ AC_DEFUN(SVN_FIND_SWIG,
 
     AC_CACHE_CHECK([how to compile Ruby extensions], [svn_cv_ruby_compile],[
       # Ruby doesn't like '-ansi', so strip that out of CFLAGS
-      svn_cv_ruby_compile="$rbconfig_CC `echo $CFLAGS | $SED -e "s/ -ansi//g"`"
+      svn_cv_ruby_compile="$rbconfig_CC `echo $CFLAGS | $SED -e "s/ -ansi//g;s/ -std=c89//g"`"
     ])
     SWIG_RB_COMPILE="$svn_cv_ruby_compile"
 
@@ -202,20 +218,20 @@ AC_DEFUN(SVN_FIND_SWIG,
     ])
     SWIG_RB_LINK="$svn_cv_ruby_link"
 
-    AC_CACHE_CHECK([for linking Ruby libraries], [ac_cv_ruby_libs], [
-      ac_cv_ruby_libs="$rbconfig_LIBRUBYARG"
+    AC_CACHE_CHECK([how to link Ruby libraries], [ac_cv_ruby_libs], [
+      ac_cv_ruby_libs="$rbconfig_LIBRUBYARG $rbconfig_LIBS"
     ])
-    SWIG_RB_LIBS="$ac_cv_ruby_libs"
+    SWIG_RB_LIBS="`SVN_REMOVE_STANDARD_LIB_DIRS($ac_cv_ruby_libs)`"
 
     AC_MSG_CHECKING([for rb_errinfo])
     old_CFLAGS="$CFLAGS"
     old_LIBS="$LIBS"
-    CFLAGS="`echo $CFLAGS | $SED -e "s/ -ansi//g"` $svn_cv_ruby_includes"
+    CFLAGS="`echo $CFLAGS | $SED -e "s/ -ansi//g;s/ -std=c89//g"` $svn_cv_ruby_includes"
     LIBS="$SWIG_RB_LIBS"
-    AC_LINK_IFELSE([
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[
 #include <ruby.h>
 int main()
-{rb_errinfo();}], have_rb_errinfo="yes", have_rb_errinfo="no")
+{rb_errinfo();}]])], have_rb_errinfo="yes", have_rb_errinfo="no")
     if test "$have_rb_errinfo" = "yes"; then
       AC_MSG_RESULT([yes])
       AC_DEFINE([HAVE_RB_ERRINFO], [1],

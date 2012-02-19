@@ -2,17 +2,22 @@
  * blame.c :  entry point for blame RA functions for ra_serf
  *
  * ====================================================================
- * Copyright (c) 2006-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -28,7 +33,6 @@
 #include "svn_xml.h"
 #include "svn_config.h"
 #include "svn_delta.h"
-#include "svn_version.h"
 #include "svn_path.h"
 #include "svn_base64.h"
 #include "svn_props.h"
@@ -42,7 +46,7 @@
 /*
  * This enum represents the current state of our XML parsing for a REPORT.
  */
-typedef enum {
+typedef enum blame_state_e {
   NONE = 0,
   FILE_REVS_REPORT,
   FILE_REV,
@@ -50,10 +54,10 @@ typedef enum {
   SET_PROP,
   REMOVE_PROP,
   MERGED_REVISION,
-  TXDELTA,
+  TXDELTA
 } blame_state_e;
 
-typedef struct {
+typedef struct blame_info_t {
   /* Current pool. */
   apr_pool_t *pool;
 
@@ -91,7 +95,7 @@ typedef struct {
 
 } blame_info_t;
 
-typedef struct {
+typedef struct blame_context_t {
   /* pool passed to get_file_revs */
   apr_pool_t *pool;
 
@@ -99,6 +103,7 @@ typedef struct {
   const char *path;
   svn_revnum_t start;
   svn_revnum_t end;
+  svn_boolean_t include_merged_revisions;
 
   /* are we done? */
   svn_boolean_t done;
@@ -154,9 +159,8 @@ create_propval(blame_info_t *info)
                                     info->prop_attr_len + 1);
     }
 
-  /* Include the null term. */
-  s = svn_string_ncreate(info->prop_attr, info->prop_attr_len + 1, info->pool);
-  if (info->prop_base64 == TRUE)
+  s = svn_string_ncreate(info->prop_attr, info->prop_attr_len, info->pool);
+  if (info->prop_base64)
     {
       s = svn_base64_decode_string(s, info->pool);
     }
@@ -324,7 +328,7 @@ end_blame(svn_ra_serf__xml_parser_t *parser,
   else if (state == TXDELTA &&
            strcmp(name.name, "txdelta") == 0)
     {
-      svn_stream_close(info->stream);
+      SVN_ERR(svn_stream_close(info->stream));
 
       svn_ra_serf__xml_pop_state(parser);
     }
@@ -376,6 +380,49 @@ cdata_blame(svn_ra_serf__xml_parser_t *parser,
   return SVN_NO_ERROR;
 }
 
+/* Implements svn_ra_serf__request_body_delegate_t */
+static svn_error_t *
+create_file_revs_body(serf_bucket_t **body_bkt,
+                      void *baton,
+                      serf_bucket_alloc_t *alloc,
+                      apr_pool_t *pool)
+{
+  serf_bucket_t *buckets;
+  blame_context_t *blame_ctx = baton;
+
+  buckets = serf_bucket_aggregate_create(alloc);
+
+  svn_ra_serf__add_open_tag_buckets(buckets, alloc,
+                                    "S:file-revs-report",
+                                    "xmlns:S", SVN_XML_NAMESPACE,
+                                    NULL);
+
+  svn_ra_serf__add_tag_buckets(buckets,
+                               "S:start-revision", apr_ltoa(pool, blame_ctx->start),
+                               alloc);
+
+  svn_ra_serf__add_tag_buckets(buckets,
+                               "S:end-revision", apr_ltoa(pool, blame_ctx->end),
+                               alloc);
+
+  if (blame_ctx->include_merged_revisions)
+    {
+      svn_ra_serf__add_tag_buckets(buckets,
+                                   "S:include-merged-revisions", NULL,
+                                   alloc);
+    }
+
+  svn_ra_serf__add_tag_buckets(buckets,
+                               "S:path", blame_ctx->path,
+                               alloc);
+
+  svn_ra_serf__add_close_tag_buckets(buckets, alloc,
+                                     "S:file-revs-report");
+
+  *body_bkt = buckets;
+  return SVN_NO_ERROR;
+}
+
 svn_error_t *
 svn_ra_serf__get_file_revs(svn_ra_session_t *ra_session,
                            const char *path,
@@ -390,59 +437,32 @@ svn_ra_serf__get_file_revs(svn_ra_session_t *ra_session,
   svn_ra_serf__session_t *session = ra_session->priv;
   svn_ra_serf__handler_t *handler;
   svn_ra_serf__xml_parser_t *parser_ctx;
-  serf_bucket_t *buckets;
   const char *relative_url, *basecoll_url, *req_url;
   int status_code;
   svn_error_t *err;
 
   blame_ctx = apr_pcalloc(pool, sizeof(*blame_ctx));
   blame_ctx->pool = pool;
+  blame_ctx->path = path;
   blame_ctx->file_rev = rev_handler;
   blame_ctx->file_rev_baton = rev_handler_baton;
   blame_ctx->start = start;
   blame_ctx->end = end;
+  blame_ctx->include_merged_revisions = include_merged_revisions;
   blame_ctx->done = FALSE;
 
-  buckets = serf_bucket_aggregate_create(session->bkt_alloc);
-
-  svn_ra_serf__add_open_tag_buckets(buckets, session->bkt_alloc,
-                                    "S:file-revs-report",
-                                    "xmlns:S", SVN_XML_NAMESPACE,
-                                    NULL);
-
-  svn_ra_serf__add_tag_buckets(buckets,
-                               "S:start-revision", apr_ltoa(pool, start),
-                               session->bkt_alloc);
-
-  svn_ra_serf__add_tag_buckets(buckets,
-                               "S:end-revision", apr_ltoa(pool, end),
-                               session->bkt_alloc);
-
-  if (include_merged_revisions)
-    {
-      svn_ra_serf__add_tag_buckets(buckets,
-                                   "S:include-merged-revisions", NULL,
-                                   session->bkt_alloc);
-    }
-
-  svn_ra_serf__add_tag_buckets(buckets,
-                               "S:path", path,
-                               session->bkt_alloc);
-
-  svn_ra_serf__add_close_tag_buckets(buckets, session->bkt_alloc,
-                                     "S:file-revs-report");
-
   SVN_ERR(svn_ra_serf__get_baseline_info(&basecoll_url, &relative_url, session,
-                                         NULL, session->repos_url.path,
+                                         NULL, session->session_url.path,
                                          end, NULL, pool));
-  req_url = svn_path_url_add_component(basecoll_url, relative_url, pool);
+  req_url = svn_path_url_add_component2(basecoll_url, relative_url, pool);
 
   handler = apr_pcalloc(pool, sizeof(*handler));
 
   handler->method = "REPORT";
   handler->path = req_url;
-  handler->body_buckets = buckets;
   handler->body_type = "text/xml";
+  handler->body_delegate = create_file_revs_body;
+  handler->body_delegate_baton = blame_ctx;
   handler->conn = session->conns[0];
   handler->session = session;
 
@@ -463,14 +483,11 @@ svn_ra_serf__get_file_revs(svn_ra_session_t *ra_session,
 
   err = svn_ra_serf__context_run_wait(&blame_ctx->done, session, pool);
 
-  if (parser_ctx->error)
-    {
-      svn_error_clear(err);
-      err = SVN_NO_ERROR;
-      SVN_ERR(parser_ctx->error);
-    }
+  err = svn_error_compose_create(
+            svn_ra_serf__error_on_status(status_code,
+                                         handler->path,
+                                         parser_ctx->location),
+            err);
 
-  SVN_ERR(svn_ra_serf__error_on_status(status_code, handler->path));
-
-  return err;
+  return svn_error_trace(err);
 }

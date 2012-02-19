@@ -1,17 +1,22 @@
 /* fs.h : interface to Subversion filesystem, private to libsvn_fs
  *
  * ====================================================================
- * Copyright (c) 2000-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -74,14 +79,11 @@ svn_fs_base__test_required_feature_format(svn_fs_t *fs,
 /* Revision at which the repo started using forward deltas. */
 #define SVN_FS_BASE__MISC_FORWARD_DELTA_UPGRADE  "forward-delta-rev"
 
-/* Next filesystem-global unique identifier value (base36). */
-#define SVN_FS_BASE__MISC_NEXT_FSGUID            "next-fsguid"
-
 
 
 /*** The filesystem structure.  ***/
 
-typedef struct
+typedef struct base_fs_data_t
 {
   /* A Berkeley DB environment for all the filesystem's databases.
      This establishes the scope of the filesystem's transactions.  */
@@ -116,7 +118,7 @@ typedef struct
 
 
 /*** Filesystem Revision ***/
-typedef struct
+typedef struct revision_t
 {
   /* id of the transaction that was committed to create this
      revision. */
@@ -126,7 +128,7 @@ typedef struct
 
 
 /*** Transaction Kind ***/
-typedef enum
+typedef enum transaction_kind_t
 {
   transaction_kind_normal = 1,  /* normal, uncommitted */
   transaction_kind_committed,   /* committed */
@@ -136,7 +138,7 @@ typedef enum
 
 
 /*** Filesystem Transaction ***/
-typedef struct
+typedef struct transaction_t
 {
   /* kind of transaction. */
   transaction_kind_t kind;
@@ -164,7 +166,7 @@ typedef struct
 
 
 /*** Node-Revision ***/
-typedef struct
+typedef struct node_revision_t
 {
   /* node kind */
   svn_node_kind_t kind;
@@ -215,7 +217,7 @@ typedef struct
 
 
 /*** Representation Kind ***/
-typedef enum
+typedef enum rep_kind_t
 {
   rep_kind_fulltext = 1, /* fulltext */
   rep_kind_delta         /* delta */
@@ -224,7 +226,7 @@ typedef enum
 
 
 /*** "Delta" Offset/Window Chunk ***/
-typedef struct
+typedef struct rep_delta_chunk_t
 {
   /* diff format version number ### at this point, "svndiff" is the
      only format used. */
@@ -249,7 +251,7 @@ typedef struct
 
 
 /*** Representation ***/
-typedef struct
+typedef struct representation_t
 {
   /* representation kind */
   rep_kind_t kind;
@@ -293,7 +295,7 @@ typedef struct
 
 
 /*** Copy Kind ***/
-typedef enum
+typedef enum copy_kind_t
 {
   copy_kind_real = 1, /* real copy */
   copy_kind_soft      /* soft copy */
@@ -302,7 +304,7 @@ typedef enum
 
 
 /*** Copy ***/
-typedef struct
+typedef struct copy_t
 {
   /* What kind of copy occurred. */
   copy_kind_t kind;
@@ -320,7 +322,7 @@ typedef struct
 
 
 /*** Change ***/
-typedef struct
+typedef struct change_t
 {
   /* Path of the change. */
   const char *path;
@@ -339,7 +341,7 @@ typedef struct
 
 
 /*** Lock node ***/
-typedef struct
+typedef struct lock_node_t
 {
   /* entries list, maps (const char *) name --> (const char *) lock-node-id */
   apr_hash_t *entries;

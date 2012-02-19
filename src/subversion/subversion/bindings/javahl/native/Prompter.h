@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2003-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -25,12 +30,10 @@
 #include <jni.h>
 #include "svn_auth.h"
 #include <string>
-
+#include "Pool.h"
 /**
  * This class requests username/password and informations about
- * ssl-certificates from the user. There are 3 Java interfaces for that.
- * PromptUserPassword, PromptUserPassword2 and PromptUserPassword3
- * each following interface extends the previous interface.
+ * ssl-certificates from the user.
  */
 class Prompter
 {
@@ -39,16 +42,6 @@ class Prompter
    * The Java callback object.
    */
   jobject m_prompter;
-
-  /**
-   * The callback objects implements PromptUserPassword2.
-   */
-  bool m_version2;
-
-  /**
-   * The callback objects implements PromptUserPassword3.
-   */
-  bool m_version3;
 
   /**
    * Tntermediate storage for an answer.
@@ -61,7 +54,7 @@ class Prompter
    */
   bool m_maySave;
 
-  Prompter(jobject jprompter, bool v2, bool v3);
+  Prompter(jobject jprompter);
   bool prompt(const char *realm, const char *pi_username, bool maySave);
   bool askYesNo(const char *realm, const char *question, bool yesIsDefault);
   const char *askQuestion(const char *realm, const char *question,
@@ -103,11 +96,21 @@ class Prompter
  public:
   static Prompter *makeCPrompter(jobject jprompter);
   ~Prompter();
-  svn_auth_provider_object_t *getProviderUsername();
-  svn_auth_provider_object_t *getProviderSimple();
-  svn_auth_provider_object_t *getProviderServerSSLTrust();
-  svn_auth_provider_object_t *getProviderClientSSL();
-  svn_auth_provider_object_t *getProviderClientSSLPassword();
+  svn_auth_provider_object_t *getProviderUsername(SVN::Pool &in_pool);
+  svn_auth_provider_object_t *getProviderSimple(SVN::Pool &in_pool);
+  svn_auth_provider_object_t *getProviderServerSSLTrust(SVN::Pool &in_pool);
+  svn_auth_provider_object_t *getProviderClientSSL(SVN::Pool &in_pool);
+  svn_auth_provider_object_t *getProviderClientSSLPassword(SVN::Pool &in_pool);
+
+  static svn_error_t *plaintext_prompt(svn_boolean_t *may_save_plaintext,
+                                       const char *realmstring,
+                                       void *baton,
+                                       apr_pool_t *pool);
+  static svn_error_t *plaintext_passphrase_prompt(
+                                      svn_boolean_t *may_save_plaintext,
+                                      const char *realmstring,
+                                      void *baton,
+                                      apr_pool_t *pool);
 };
 
 #endif // PROMPTER_H

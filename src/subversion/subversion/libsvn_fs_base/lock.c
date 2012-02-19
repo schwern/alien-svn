@@ -1,17 +1,22 @@
 /* lock.c :  functions for manipulating filesystem locks.
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -28,6 +33,7 @@
 #include "err.h"
 #include "bdb/locks-table.h"
 #include "bdb/lock-tokens-table.h"
+#include "util/fs_skels.h"
 #include "../libsvn_fs/fs-loader.h"
 #include "private/svn_fs_util.h"
 
@@ -80,7 +86,6 @@ txn_body_lock(void *baton, trail_t *trail)
   struct lock_args *args = baton;
   svn_node_kind_t kind = svn_node_file;
   svn_lock_t *existing_lock;
-  const char *fs_username;
   svn_lock_t *lock;
 
   SVN_ERR(svn_fs_base__get_path_kind(&kind, args->path, trail, trail->pool));
@@ -88,20 +93,27 @@ txn_body_lock(void *baton, trail_t *trail)
   /* Until we implement directory locks someday, we only allow locks
      on files or non-existent paths. */
   if (kind == svn_node_dir)
-    return SVN_FS__ERR_NOT_FILE(trail->fs, args->path);
+    return SVN_FS__ERR_NOT_FILE(trail->fs, args->path, trail->pool);
 
   /* While our locking implementation easily supports the locking of
      nonexistent paths, we deliberately choose not to allow such madness. */
   if (kind == svn_node_none)
-    return svn_error_createf(SVN_ERR_FS_NOT_FOUND, NULL,
-                             "Path '%s' doesn't exist in HEAD revision",
-                             args->path);
+    {
+      if (SVN_IS_VALID_REVNUM(args->current_rev))
+        return svn_error_createf(
+          SVN_ERR_FS_OUT_OF_DATE, NULL,
+          _("Path '%s' doesn't exist in HEAD revision"),
+          args->path);
+      else
+        return svn_error_createf(
+          SVN_ERR_FS_NOT_FOUND, NULL,
+          _("Path '%s' doesn't exist in HEAD revision"),
+          args->path);
+    }
 
   /* There better be a username attached to the fs. */
   if (!trail->fs->access_ctx || !trail->fs->access_ctx->username)
-    return SVN_FS__ERR_NO_USER(trail->fs);
-  else
-    fs_username = trail->fs->access_ctx->username; /* for convenience */
+    return SVN_FS__ERR_NO_USER(trail->fs, trail->pool);
 
   /* Is the caller attempting to lock an out-of-date working file? */
   if (SVN_IS_VALID_REVNUM(args->current_rev))
@@ -167,7 +179,8 @@ txn_body_lock(void *baton, trail_t *trail)
         {
           /* Sorry, the path is already locked. */
           return SVN_FS__ERR_PATH_ALREADY_LOCKED(trail->fs,
-                                                      existing_lock);
+                                                 existing_lock,
+                                                 trail->pool);
         }
       else
         {
@@ -238,7 +251,7 @@ svn_fs_base__generate_lock_token(const char **token,
      generate a URI that matches the DAV RFC.  We could change this to
      some other URI scheme someday, if we wish. */
   *token = apr_pstrcat(pool, "opaquelocktoken:",
-                       svn_uuid_generate(pool), NULL);
+                       svn_uuid_generate(pool), (char *)NULL);
   return SVN_NO_ERROR;
 }
 
@@ -269,21 +282,22 @@ txn_body_unlock(void *baton, trail_t *trail)
       if (args->token == NULL)
         return svn_fs_base__err_no_lock_token(trail->fs, args->path);
       else if (strcmp(lock_token, args->token) != 0)
-        return SVN_FS__ERR_NO_SUCH_LOCK(trail->fs, args->path);
+        return SVN_FS__ERR_NO_SUCH_LOCK(trail->fs, args->path, trail->pool);
 
       SVN_ERR(svn_fs_bdb__lock_get(&lock, trail->fs, lock_token,
                                    trail, trail->pool));
 
       /* There better be a username attached to the fs. */
       if (!trail->fs->access_ctx || !trail->fs->access_ctx->username)
-        return SVN_FS__ERR_NO_USER(trail->fs);
+        return SVN_FS__ERR_NO_USER(trail->fs, trail->pool);
 
       /* And that username better be the same as the lock's owner. */
       if (strcmp(trail->fs->access_ctx->username, lock->owner) != 0)
-        return SVN_FS__ERR_LOCK_OWNER_MISMATCH
-          (trail->fs,
+        return SVN_FS__ERR_LOCK_OWNER_MISMATCH(
+           trail->fs,
            trail->fs->access_ctx->username,
-           lock->owner);
+           lock->owner,
+           trail->pool);
     }
 
   /* Remove a row from each of the locking tables. */
@@ -346,7 +360,7 @@ svn_fs_base__get_lock_helper(svn_lock_t **lock_p,
   else
     SVN_ERR(err);
 
-  return err;
+  return svn_error_trace(err);
 }
 
 
@@ -381,12 +395,41 @@ svn_fs_base__get_lock(svn_lock_t **lock,
   return svn_fs_base__retry_txn(fs, txn_body_get_lock, &args, FALSE, pool);
 }
 
+/* Implements `svn_fs_get_locks_callback_t', spooling lock information
+   to disk as the filesystem provides it.  BATON is an 'apr_file_t *'
+   object pointing to open, writable spool file.  We'll write the
+   spool file with a format like so:
+
+      SKEL1_LEN "\n" SKEL1 "\n" SKEL2_LEN "\n" SKEL2 "\n" ...
+
+   where each skel is a lock skel (the same format we use to store
+   locks in the `locks' table). */
+static svn_error_t *
+spool_locks_info(void *baton,
+                 svn_lock_t *lock,
+                 apr_pool_t *pool)
+{
+  svn_skel_t *lock_skel;
+  apr_file_t *spool_file = (apr_file_t *)baton;
+  const char *skel_len;
+  svn_stringbuf_t *skel_buf;
+
+  SVN_ERR(svn_fs_base__unparse_lock_skel(&lock_skel, lock, pool));
+  skel_buf = svn_skel__unparse(lock_skel, pool);
+  skel_len = apr_psprintf(pool, "%" APR_SIZE_T_FMT "\n", skel_buf->len);
+  SVN_ERR(svn_io_file_write_full(spool_file, skel_len, strlen(skel_len),
+                                 NULL, pool));
+  SVN_ERR(svn_io_file_write_full(spool_file, skel_buf->data,
+                                 skel_buf->len, NULL, pool));
+  return svn_io_file_write_full(spool_file, "\n", 1, NULL, pool);
+}
+
 
 struct locks_get_args
 {
   const char *path;
-  svn_fs_get_locks_callback_t get_locks_func;
-  void *get_locks_baton;
+  svn_depth_t depth;
+  apr_file_t *spool_file;
 };
 
 
@@ -394,8 +437,8 @@ static svn_error_t *
 txn_body_get_locks(void *baton, trail_t *trail)
 {
   struct locks_get_args *args = baton;
-  return svn_fs_bdb__locks_get(trail->fs, args->path,
-                               args->get_locks_func, args->get_locks_baton,
+  return svn_fs_bdb__locks_get(trail->fs, args->path, args->depth,
+                               spool_locks_info, args->spool_file,
                                trail, trail->pool);
 }
 
@@ -403,17 +446,68 @@ txn_body_get_locks(void *baton, trail_t *trail)
 svn_error_t *
 svn_fs_base__get_locks(svn_fs_t *fs,
                        const char *path,
+                       svn_depth_t depth,
                        svn_fs_get_locks_callback_t get_locks_func,
                        void *get_locks_baton,
                        apr_pool_t *pool)
 {
   struct locks_get_args args;
+  apr_off_t offset = 0;
+  svn_stream_t *stream;
+  svn_stringbuf_t *buf;
+  svn_boolean_t eof;
+  apr_pool_t *iterpool = svn_pool_create(pool);
 
   SVN_ERR(svn_fs__check_fs(fs, TRUE));
+
   args.path = svn_fs__canonicalize_abspath(path, pool);
-  args.get_locks_func = get_locks_func;
-  args.get_locks_baton = get_locks_baton;
-  return svn_fs_base__retry_txn(fs, txn_body_get_locks, &args, FALSE, pool);
+  args.depth = depth;
+  SVN_ERR(svn_io_open_uniquely_named(&(args.spool_file), NULL, NULL, NULL,
+                                     NULL, svn_io_file_del_on_close,
+                                     pool, pool));
+  SVN_ERR(svn_fs_base__retry_txn(fs, txn_body_get_locks, &args, FALSE, pool));
+
+  /* Rewind the spool file, then re-read it, calling GET_LOCKS_FUNC(). */
+  SVN_ERR(svn_io_file_seek(args.spool_file, APR_SET, &offset, pool));
+  stream = svn_stream_from_aprfile2(args.spool_file, FALSE, pool);
+
+  while (1)
+    {
+      apr_size_t len, skel_len;
+      char c, *end, *skel_buf;
+      svn_skel_t *lock_skel;
+      svn_lock_t *lock;
+
+      svn_pool_clear(iterpool);
+
+      /* Read a skel length line and parse it for the skel's length.  */
+      SVN_ERR(svn_stream_readline(stream, &buf, "\n", &eof, iterpool));
+      if (eof)
+        break;
+      skel_len = (size_t) strtoul(buf->data, &end, 10);
+      if (skel_len == (size_t) ULONG_MAX || *end != '\0')
+        return svn_error_create(SVN_ERR_MALFORMED_FILE, NULL, NULL);
+
+      /* Now read that much into a buffer. */
+      skel_buf = apr_palloc(pool, skel_len + 1);
+      SVN_ERR(svn_stream_read(stream, skel_buf, &skel_len));
+      skel_buf[skel_len] = '\0';
+
+      /* Read the extra newline that follows the skel. */
+      len = 1;
+      SVN_ERR(svn_stream_read(stream, &c, &len));
+      if (c != '\n')
+        return svn_error_create(SVN_ERR_MALFORMED_FILE, NULL, NULL);
+
+      /* Parse the skel into a lock, and notify the caller. */
+      lock_skel = svn_skel__parse(skel_buf, skel_len, iterpool);
+      SVN_ERR(svn_fs_base__parse_lock_skel(&lock, lock_skel, iterpool));
+      SVN_ERR(get_locks_func(get_locks_baton, lock, iterpool));
+    }
+
+  SVN_ERR(svn_stream_close(stream));
+  svn_pool_destroy(iterpool);
+  return SVN_NO_ERROR;
 }
 
 
@@ -444,7 +538,7 @@ verify_lock(svn_fs_t *fs,
   else if (strcmp(fs->access_ctx->username, lock->owner) != 0)
     return svn_error_createf
       (SVN_ERR_FS_LOCK_OWNER_MISMATCH, NULL,
-       _("User %s does not own lock on path '%s' (currently locked by %s)"),
+       _("User '%s' does not own lock on path '%s' (currently locked by '%s')"),
        fs->access_ctx->username, lock->path, lock->owner);
 
   else if (apr_hash_get(fs->access_ctx->lock_tokens, lock->token,
@@ -479,7 +573,8 @@ svn_fs_base__allow_locked_operation(const char *path,
   if (recurse)
     {
       /* Discover all locks at or below the path. */
-      SVN_ERR(svn_fs_bdb__locks_get(trail->fs, path, get_locks_callback,
+      SVN_ERR(svn_fs_bdb__locks_get(trail->fs, path, svn_depth_infinity,
+                                    get_locks_callback,
                                     trail->fs, trail, pool));
     }
   else

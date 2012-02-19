@@ -2,17 +2,22 @@
  * utf.c:  UTF-8 conversion routines
  *
  * ====================================================================
- * Copyright (c) 2000-2007, 2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -24,6 +29,7 @@
 #include <apr_strings.h>
 #include <apr_lib.h>
 #include <apr_xlate.h>
+#include <apr_atomic.h>
 
 #include "svn_string.h"
 #include "svn_error.h"
@@ -34,12 +40,18 @@
 #include "win32_xlate.h"
 
 #include "private/svn_utf_private.h"
+#include "private/svn_dep_compat.h"
+#include "private/svn_string_private.h"
 
 
 
-#define SVN_UTF_NTOU_XLATE_HANDLE "svn-utf-ntou-xlate-handle"
-#define SVN_UTF_UTON_XLATE_HANDLE "svn-utf-uton-xlate-handle"
-#define SVN_APR_UTF8_CHARSET "UTF-8"
+/* Use these static strings to maximize performance on standard conversions.
+ * Any strings on other locations are still valid, however.
+ */
+static const char *SVN_UTF_NTOU_XLATE_HANDLE = "svn-utf-ntou-xlate-handle";
+static const char *SVN_UTF_UTON_XLATE_HANDLE = "svn-utf-uton-xlate-handle";
+
+static const char *SVN_APR_UTF8_CHARSET = "UTF-8";
 
 #if APR_HAS_THREADS
 static apr_thread_mutex_t *xlate_handle_mutex = NULL;
@@ -74,6 +86,13 @@ typedef struct xlate_handle_node_t {
    memory leak. */
 static apr_hash_t *xlate_handle_hash = NULL;
 
+/* "1st level cache" to standard conversion maps. We may access these
+ * using atomic xchange ops, i.e. without further thread synchronization.
+ * If the respective item is NULL, fallback to hash lookup.
+ */
+static void * volatile xlat_ntou_static_handle = NULL;
+static void * volatile xlat_uton_static_handle = NULL;
+
 /* Clean up the xlate handle cache. */
 static apr_status_t
 xlate_cleanup(void *arg)
@@ -85,6 +104,10 @@ xlate_cleanup(void *arg)
   xlate_handle_mutex = NULL;
 #endif
   xlate_handle_hash = NULL;
+
+  /* ensure no stale objects get accessed */
+  xlat_ntou_static_handle = NULL;
+  xlat_uton_static_handle = NULL;
 
   return APR_SUCCESS;
 }
@@ -150,7 +173,33 @@ get_xlate_key(const char *topage,
     topage = "APR_DEFAULT_CHARSET";
 
   return apr_pstrcat(pool, "svn-utf-", frompage, "to", topage,
-                     "-xlate-handle", NULL);
+                     "-xlate-handle", (char *)NULL);
+}
+
+/* Atomically replace the content in *MEM with NEW_VALUE and return
+ * the previous content of *MEM. If atomicy cannot be guaranteed,
+ * *MEM will not be modified and NEW_VALUE is simply returned to
+ * the caller.
+ */
+static APR_INLINE void*
+atomic_swap(void * volatile * mem, void *new_value)
+{
+#if APR_HAS_THREADS
+#if APR_VERSION_AT_LEAST(1,3,0)
+  /* Cast is necessary because of APR bug:
+     https://issues.apache.org/bugzilla/show_bug.cgi?id=50731 */
+   return apr_atomic_xchgptr((volatile void **)mem, new_value);
+#else
+   /* old APRs don't support atomic swaps. Simply return the
+    * input to the caller for further proccessing. */
+   return new_value;
+#endif
+#else
+   /* no threads - no sync. necessary */
+   void *old_value = (void*)*mem;
+   *mem = new_value;
+   return old_value;
+#endif
 }
 
 /* Set *RET to a handle node for converting from FROMPAGE to TOPAGE,
@@ -178,6 +227,19 @@ get_xlate_handle_node(xlate_handle_node_t **ret,
     {
       if (xlate_handle_hash)
         {
+          /* 1st level: global, static items */
+          if (userdata_key == SVN_UTF_NTOU_XLATE_HANDLE)
+            old_node = atomic_swap(&xlat_ntou_static_handle, NULL);
+          else if (userdata_key == SVN_UTF_UTON_XLATE_HANDLE)
+            old_node = atomic_swap(&xlat_uton_static_handle, NULL);
+
+          if (old_node && old_node->valid)
+            {
+              *ret = old_node;
+              return SVN_NO_ERROR;
+            }
+
+          /* 2nd level: hash lookup */
 #if APR_HAS_THREADS
           apr_err = apr_thread_mutex_lock(xlate_handle_mutex);
           if (apr_err != APR_SUCCESS)
@@ -316,9 +378,20 @@ put_xlate_handle_node(xlate_handle_node_t *node,
   assert(node->next == NULL);
   if (!userdata_key)
     return;
+
+  /* push previous global node to the hash */
   if (xlate_handle_hash)
     {
       xlate_handle_node_t **node_p;
+
+      /* 1st level: global, static items */
+      if (userdata_key == SVN_UTF_NTOU_XLATE_HANDLE)
+        node = atomic_swap(&xlat_ntou_static_handle, node);
+      else if (userdata_key == SVN_UTF_UTON_XLATE_HANDLE)
+        node = atomic_swap(&xlat_uton_static_handle, node);
+      if (node == NULL)
+        return;
+
 #if APR_HAS_THREADS
       if (apr_thread_mutex_lock(xlate_handle_mutex) != APR_SUCCESS)
         SVN_ERR_MALFUNCTION_NO_RETURN();
@@ -394,7 +467,7 @@ fuzzy_escape(const char *src, apr_size_t len, apr_pool_t *pool)
       src++;
     }
 
-  /* Allocate that amount. */
+  /* Allocate that amount, plus one slot for '\0' character. */
   new = apr_palloc(pool, new_len + 1);
 
   new_orig = new;
@@ -408,7 +481,7 @@ fuzzy_escape(const char *src, apr_size_t len, apr_pool_t *pool)
              function escapes different characters.  Please keep in sync!
              ### If we add another fuzzy escape somewhere, we should abstract
              ### this out to a common function. */
-          sprintf(new, "?\\%03u", (unsigned char) *src_orig);
+          apr_snprintf(new, 6, "?\\%03u", (unsigned char) *src_orig);
           new += 5;
         }
       else
@@ -445,7 +518,6 @@ convert_to_stringbuf(xlate_handle_node_t *node,
   apr_status_t apr_err;
   apr_size_t srclen = src_length;
   apr_size_t destlen = buflen;
-  char *destbuf;
 
   /* Initialize *DEST to an empty stringbuf.
      A 1:2 ratio of input bytes to output bytes (as assigned above)
@@ -453,7 +525,6 @@ convert_to_stringbuf(xlate_handle_node_t *node,
      to be enough, we'll grow the buffer again, sizing it based on a
      1:3 ratio of the remainder of the string. */
   *dest = svn_stringbuf_create_ensure(buflen + 1, pool);
-  destbuf = (*dest)->data;
 
   /* Not only does it not make sense to convert an empty string, but
      apr-iconv is quite unreasonable about not allowing that. */
@@ -527,9 +598,9 @@ check_non_ascii(const char *data, apr_size_t len, apr_pool_t *pool)
 
   for (; len > 0; --len, data++)
     {
-      if ((! apr_isascii(*data))
-          || ((! apr_isspace(*data))
-              && apr_iscntrl(*data)))
+      if ((! svn_ctype_isascii(*data))
+          || ((! svn_ctype_isspace(*data))
+              && svn_ctype_iscntrl(*data)))
         {
           /* Show the printable part of the data, followed by the
              decimal code of the questionable character.  Because if a
@@ -574,7 +645,8 @@ invalid_utf8(const char *data, apr_size_t len, apr_pool_t *pool)
 {
   const char *last = svn_utf__last_valid(data, len);
   const char *valid_txt = "", *invalid_txt = "";
-  int i, valid, invalid;
+  apr_size_t i;
+  size_t valid, invalid;
 
   /* We will display at most 24 valid octets (this may split a leading
      multi-byte character) as that should fit on one 80 character line. */
@@ -584,7 +656,8 @@ invalid_utf8(const char *data, apr_size_t len, apr_pool_t *pool)
   for (i = 0; i < valid; ++i)
     valid_txt = apr_pstrcat(pool, valid_txt,
                             apr_psprintf(pool, " %02x",
-                                         (unsigned char)last[i-valid]), NULL);
+                                         (unsigned char)last[i-valid]),
+                                         (char *)NULL);
 
   /* 4 invalid octets will guarantee that the faulty octet is displayed */
   invalid = data + len - last;
@@ -593,7 +666,8 @@ invalid_utf8(const char *data, apr_size_t len, apr_pool_t *pool)
   for (i = 0; i < invalid; ++i)
     invalid_txt = apr_pstrcat(pool, invalid_txt,
                               apr_psprintf(pool, " %02x",
-                                           (unsigned char)last[i]), NULL);
+                                           (unsigned char)last[i]),
+                                           (char *)NULL);
 
   return svn_error_createf(APR_EINVAL, NULL,
                            _("Valid UTF-8 data\n(hex:%s)\n"
@@ -669,7 +743,7 @@ svn_utf_string_to_utf8(const svn_string_t **dest,
       if (! err)
         err = check_utf8(destbuf->data, destbuf->len, pool);
       if (! err)
-        *dest = svn_string_create_from_buf(destbuf, pool);
+        *dest = svn_stringbuf__morph_into_string(destbuf);
     }
   else
     {
@@ -805,7 +879,7 @@ svn_utf_string_from_utf8(const svn_string_t **dest,
         err = convert_to_stringbuf(node, src->data, src->len,
                                    &dbuf, pool);
       if (! err)
-        *dest = svn_string_create_from_buf(dbuf, pool);
+        *dest = svn_stringbuf__morph_into_string(dbuf);
     }
   else
     {

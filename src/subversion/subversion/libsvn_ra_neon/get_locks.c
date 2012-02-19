@@ -2,17 +2,22 @@
  * get_locks.c :  RA get-locks API implementation
  *
  * ====================================================================
- * Copyright (c) 2004-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -39,6 +44,7 @@
 #include "svn_time.h"
 
 #include "private/svn_dav_protocol.h"
+#include "private/svn_fspath.h"
 #include "svn_private_config.h"
 
 #include "ra_neon.h"
@@ -80,7 +86,7 @@ static const svn_ra_neon__xml_elm_t getlocks_report_elements[] =
  * The get-locks-report xml request body is super-simple.
  * The server doesn't need anything but the URI in the REPORT request line.
  *
- *    <S:get-locks-report xmlns...>
+ *    <S:get-locks-report [depth=DEPTH] xmlns...>
  *    </S:get-locks-report>
  *
  * The get-locks-report xml response is just a list of svn_lock_t's
@@ -115,7 +121,9 @@ static const svn_ra_neon__xml_elm_t getlocks_report_elements[] =
 
 
 /* Context for parsing server's response. */
-typedef struct {
+typedef struct get_locks_baton_t {
+  const char *path;                /* fspath target of the report */
+  svn_depth_t requested_depth;     /* requested depth of the report */
   svn_lock_t *current_lock;        /* the lock being constructed */
   svn_stringbuf_t *cdata_accum;    /* a place to accumulate cdata */
   const char *encoding;            /* normally NULL, else the value of
@@ -230,15 +238,43 @@ getlocks_end_element(void *userdata, int state,
         SVN_ERR(svn_error_create(SVN_ERR_RA_DAV_MALFORMED_DATA, NULL,
                                  _("Incomplete lock data returned")));
 
-      apr_hash_set(baton->lock_hash, baton->current_lock->path,
-                   APR_HASH_KEY_STRING, baton->current_lock);
+      /* Filter out unwanted paths.  Since Subversion only allows
+         locks on files, we can treat depth=immediates the same as
+         depth=files for filtering purposes.  Meaning, we'll keep
+         this lock if:
+
+         a) its path is the very path we queried, or
+         b) we've asked for a fully recursive answer, or
+         c) we've asked for depth=files or depth=immediates, and this
+            lock is on an immediate child of our query path.
+      */
+      if ((strcmp(baton->path, baton->current_lock->path) == 0)
+          || (baton->requested_depth == svn_depth_infinity))
+        {
+          apr_hash_set(baton->lock_hash, baton->current_lock->path,
+                       APR_HASH_KEY_STRING, baton->current_lock);
+        }
+      else if ((baton->requested_depth == svn_depth_files) ||
+               (baton->requested_depth == svn_depth_immediates))
+        {
+          const char *rel_uri = svn_fspath__is_child(baton->path,
+                                                     baton->current_lock->path,
+                                                     baton->scratchpool);
+          if (rel_uri && (svn_path_component_count(rel_uri) == 1))
+            apr_hash_set(baton->lock_hash, baton->current_lock->path,
+                         APR_HASH_KEY_STRING, baton->current_lock);
+          svn_pool_clear(baton->scratchpool);
+        }
       break;
 
     case ELEM_lock_path:
       /* neon has already xml-unescaped the cdata for us. */
-      baton->current_lock->path = apr_pstrmemdup(baton->pool,
-                                                 baton->cdata_accum->data,
-                                                 baton->cdata_accum->len);
+      baton->current_lock->path =
+        svn_fspath__canonicalize(apr_pstrmemdup(baton->scratchpool,
+                                                baton->cdata_accum->data,
+                                                baton->cdata_accum->len),
+                                 baton->pool);
+
       /* clean up the accumulator. */
       svn_stringbuf_setempty(baton->cdata_accum);
       svn_pool_clear(baton->scratchpool);
@@ -325,20 +361,30 @@ getlocks_end_element(void *userdata, int state,
 }
 
 
-
 svn_error_t *
 svn_ra_neon__get_locks(svn_ra_session_t *session,
                        apr_hash_t **locks,
                        const char *path,
+                       svn_depth_t depth,
                        apr_pool_t *pool)
 {
   svn_ra_neon__session_t *ras = session->priv;
-  const char *body, *url;
+  const char *body, *url, *rel_path;
   svn_error_t *err;
   int status_code = 0;
   get_locks_baton_t baton;
 
+  /* We always run the report on the 'public' URL, which represents
+     HEAD anyway.  If the path doesn't exist in HEAD, then there can't
+     possibly be a lock, so we just return no locks. */
+  url = svn_path_url_add_component2(ras->url->data, path, pool);
+
+  SVN_ERR(svn_ra_neon__get_path_relative_to_root(session, &rel_path,
+                                                 url, pool));
+
   baton.lock_hash = apr_hash_make(pool);
+  baton.path = svn_fspath__canonicalize(rel_path, pool);
+  baton.requested_depth = depth;
   baton.pool = pool;
   baton.scratchpool = svn_pool_create(pool);
   baton.current_lock = NULL;
@@ -348,14 +394,9 @@ svn_ra_neon__get_locks(svn_ra_session_t *session,
   body = apr_psprintf(pool,
                       "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
                       "<S:get-locks-report xmlns:S=\"" SVN_XML_NAMESPACE "\" "
-                      "xmlns:D=\"DAV:\">"
-                      "</S:get-locks-report>");
-
-
-  /* We always run the report on the 'public' URL, which represents
-     HEAD anyway.  If the path doesn't exist in HEAD, then there can't
-     possibly be a lock, so we just return no locks. */
-  url = svn_path_url_add_component(ras->url->data, path, pool);
+                      "xmlns:D=\"DAV:\" depth=\"%s\">"
+                      "</S:get-locks-report>",
+                      svn_depth_to_word(depth));
 
   err = svn_ra_neon__parsed_request(ras, "REPORT", url,
                                     body, NULL, NULL,

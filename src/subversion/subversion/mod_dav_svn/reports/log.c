@@ -1,18 +1,23 @@
 /*
- * log.c: handle the log-report request and response
+ * log.c: mod_dav_svn REPORT handler for querying revision log info
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -25,6 +30,7 @@
 #include "svn_repos.h"
 #include "svn_string.h"
 #include "svn_types.h"
+#include "svn_base64.h"
 #include "svn_xml.h"
 #include "svn_path.h"
 #include "svn_dav.h"
@@ -32,6 +38,7 @@
 #include "svn_props.h"
 
 #include "private/svn_log.h"
+#include "private/svn_fspath.h"
 
 #include "../dav_svn.h"
 
@@ -55,6 +62,9 @@ struct log_receiver_baton
 
   /* whether the client requested any custom revprops */
   svn_boolean_t requested_custom_revprops;
+
+  /* whether the client can handle encoded binary property values */
+  svn_boolean_t encode_binary_props;
 };
 
 
@@ -67,10 +77,11 @@ maybe_send_header(struct log_receiver_baton *lrb)
 {
   if (lrb->needs_header)
     {
-      SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                DAV_XML_HEADER DEBUG_CR
-                                "<S:log-report xmlns:S=\"" SVN_XML_NAMESPACE
-                                "\" " "xmlns:D=\"DAV:\">" DEBUG_CR));
+      SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output,
+                                    DAV_XML_HEADER DEBUG_CR
+                                    "<S:log-report xmlns:S=\""
+                                    SVN_XML_NAMESPACE "\" "
+                                    "xmlns:D=\"DAV:\">" DEBUG_CR));
       lrb->needs_header = FALSE;
     }
   return SVN_NO_ERROR;
@@ -99,9 +110,10 @@ log_receiver(void *baton,
         lrb->stack_depth--;
     }
 
-  SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                            "<S:log-item>" DEBUG_CR "<D:version-name>%ld"
-                            "</D:version-name>" DEBUG_CR, log_entry->revision));
+  SVN_ERR(dav_svn__brigade_printf(lrb->bb, lrb->output,
+                                  "<S:log-item>" DEBUG_CR "<D:version-name>%ld"
+                                  "</D:version-name>" DEBUG_CR,
+                                  log_entry->revision));
 
   if (log_entry->revprops)
     {
@@ -111,48 +123,63 @@ log_receiver(void *baton,
            hi = apr_hash_next(hi))
         {
           char *name;
-          svn_string_t *value;
+          void *val;
+          const svn_string_t *value;
+          const char *encoding_str = "";
 
           svn_pool_clear(iterpool);
-          apr_hash_this(hi, (void *)&name, NULL, (void *)&value);
+          apr_hash_this(hi, (void *)&name, NULL, &val);
+          value = val;
+
+          /* If the client is okay with us encoding binary (or really,
+             any non-XML-safe) property values, do so as necessary. */
+          if (lrb->encode_binary_props)
+            {
+              if (! svn_xml_is_xml_safe(value->data, value->len))
+                {
+                  value = svn_base64_encode_string2(value, TRUE, iterpool);
+                  encoding_str = " encoding=\"base64\"";
+                }
+            }
+
           if (strcmp(name, SVN_PROP_REVISION_AUTHOR) == 0)
-            SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                      "<D:creator-displayname>%s"
-                                      "</D:creator-displayname>" DEBUG_CR,
-                                      apr_xml_quote_string(iterpool,
-                                                           value->data, 0)));
+            SVN_ERR(dav_svn__brigade_printf
+                    (lrb->bb, lrb->output,
+                     "<D:creator-displayname%s>%s</D:creator-displayname>"
+                     DEBUG_CR, encoding_str,
+                     apr_xml_quote_string(iterpool, value->data, 0)));
           else if (strcmp(name, SVN_PROP_REVISION_DATE) == 0)
             /* ### this should be DAV:creation-date, but we need to format
                ### that date a bit differently */
-            SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                      "<S:date>%s</S:date>" DEBUG_CR,
-                                      apr_xml_quote_string(iterpool,
-                                                           value->data, 0)));
+            SVN_ERR(dav_svn__brigade_printf
+                    (lrb->bb, lrb->output,
+                     "<S:date%s>%s</S:date>" DEBUG_CR, encoding_str,
+                     apr_xml_quote_string(iterpool, value->data, 0)));
           else if (strcmp(name, SVN_PROP_REVISION_LOG) == 0)
-            SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                      "<D:comment>%s</D:comment>" DEBUG_CR,
-                                      apr_xml_quote_string
-                                      (pool, svn_xml_fuzzy_escape(value->data,
-                                                                  iterpool), 0)));
+            SVN_ERR(dav_svn__brigade_printf
+                    (lrb->bb, lrb->output,
+                     "<D:comment%s>%s</D:comment>" DEBUG_CR, encoding_str,
+                     apr_xml_quote_string(pool,
+                                          svn_xml_fuzzy_escape(value->data,
+                                                               iterpool), 0)));
           else
-            {
-              SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                        "<S:revprop name=\"%s\">"
-                                        "%s</S:revprop>"
-                                        DEBUG_CR,
-                                        apr_xml_quote_string(iterpool, name, 0),
-                                        apr_xml_quote_string(iterpool,
-                                                             value->data, 0)));
-            }
+            SVN_ERR(dav_svn__brigade_printf
+                    (lrb->bb, lrb->output,
+                     "<S:revprop name=\"%s\"%s>%s</S:revprop>" DEBUG_CR,
+                     apr_xml_quote_string(iterpool, name, 0), encoding_str,
+                     apr_xml_quote_string(iterpool, value->data, 0)));
         }
     }
 
   if (log_entry->has_children)
     {
-      SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                "<S:has-children/>"));
+      SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output, "<S:has-children/>"));
       lrb->stack_depth++;
     }
+
+  if (log_entry->subtractive_merge)
+    SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output,
+                                  "<S:subtractive-merge/>"));
 
   if (log_entry->changed_paths2)
     {
@@ -165,6 +192,7 @@ log_receiver(void *baton,
         {
           void *val;
           svn_log_changed_path2_t *log_item;
+          const char *close_element = NULL;
 
           svn_pool_clear(iterpool);
           apr_hash_this(hi, (void *) &path, NULL, &val);
@@ -177,92 +205,75 @@ log_receiver(void *baton,
             case 'A':
               if (log_item->copyfrom_path
                   && SVN_IS_VALID_REVNUM(log_item->copyfrom_rev))
-                SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                          "<S:added-path"
-                                          " copyfrom-path=\"%s\""
-                                          " copyfrom-rev=\"%ld\""
-                                          " node-kind=\"%s\">"
-                                          "%s</S:added-path>" DEBUG_CR,
-                                          apr_xml_quote_string
-                                          (iterpool,
-                                           log_item->copyfrom_path,
-                                           1), /* escape quotes */
-                                          log_item->copyfrom_rev,
-                                          svn_node_kind_to_word(
-                                                            log_item->node_kind),
-                                          apr_xml_quote_string(iterpool,
-                                                               path, 0)));
+                SVN_ERR(dav_svn__brigade_printf
+                        (lrb->bb, lrb->output,
+                         "<S:added-path copyfrom-path=\"%s\""
+                         " copyfrom-rev=\"%ld\"",
+                         apr_xml_quote_string(iterpool,
+                                              log_item->copyfrom_path,
+                                              1), /* escape quotes */
+                         log_item->copyfrom_rev));
               else
-                SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                          "<S:added-path"
-                                          " node-kind=\"%s\">%s</S:added-path>"
-                                          DEBUG_CR,
-                                          svn_node_kind_to_word(
-                                                            log_item->node_kind),
-                                          apr_xml_quote_string(iterpool, path,
-                                                               0)));
+                SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output,
+                                              "<S:added-path"));
+
+              close_element = "S:added-path";
               break;
 
             case 'R':
               if (log_item->copyfrom_path
                   && SVN_IS_VALID_REVNUM(log_item->copyfrom_rev))
-                SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                          "<S:replaced-path"
-                                          " copyfrom-path=\"%s\""
-                                          " copyfrom-rev=\"%ld\""
-                                          " node-kind=\"%s\">"
-                                          "%s</S:replaced-path>" DEBUG_CR,
-                                          apr_xml_quote_string
-                                          (iterpool,
-                                           log_item->copyfrom_path,
-                                           1), /* escape quotes */
-                                          log_item->copyfrom_rev,
-                                          svn_node_kind_to_word(
-                                                            log_item->node_kind),
-                                          apr_xml_quote_string(iterpool,
-                                                               path, 0)));
+                SVN_ERR(dav_svn__brigade_printf
+                        (lrb->bb, lrb->output,
+                         "<S:replaced-path copyfrom-path=\"%s\""
+                         " copyfrom-rev=\"%ld\"",
+                         apr_xml_quote_string(iterpool,
+                                              log_item->copyfrom_path,
+                                              1), /* escape quotes */
+                         log_item->copyfrom_rev));
               else
-                SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                          "<S:replaced-path"
-                                          " node-kind=\"%s\">%s"
-                                          "</S:replaced-path>" DEBUG_CR,
-                                          svn_node_kind_to_word(
-                                                            log_item->node_kind),
-                                          apr_xml_quote_string(iterpool, path,
-                                                               0)));
+                SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output,
+                                              "<S:replaced-path"));
+
+              close_element = "S:replaced-path";
               break;
 
             case 'D':
-              SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                        "<S:deleted-path"
-                                        " node-kind=\"%s\">%s</S:deleted-path>"
-                                        DEBUG_CR,
-                                        svn_node_kind_to_word(
-                                                            log_item->node_kind),
-                                        apr_xml_quote_string(iterpool,
-                                                             path, 0)));
+              SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output,
+                                            "<S:deleted-path"));
+              close_element = "S:deleted-path";
               break;
 
             case 'M':
-              SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output,
-                                        "<S:modified-path"
-                                        " node-kind=\"%s\">%s"
-                                        "</S:modified-path>" DEBUG_CR,
-                                        svn_node_kind_to_word(
-                                                            log_item->node_kind),
-                                        apr_xml_quote_string(iterpool,
-                                                             path, 0)));
+              SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output,
+                                            "<S:modified-path"));
+              close_element = "S:modified-path";
               break;
 
             default:
               break;
             }
+
+          /* If we need to close the element, then send the attributes
+             that apply to all changed items and then close the element. */
+          if (close_element)
+            SVN_ERR(dav_svn__brigade_printf
+                    (lrb->bb, lrb->output,
+                     " node-kind=\"%s\""
+                     " text-mods=\"%s\""
+                     " prop-mods=\"%s\">%s</%s>" DEBUG_CR,
+                     svn_node_kind_to_word(log_item->node_kind),
+                     svn_tristate__to_word(log_item->text_modified),
+                     svn_tristate__to_word(log_item->props_modified),
+                     apr_xml_quote_string(iterpool, path, 0),
+                     close_element));
         }
     }
 
   svn_pool_destroy(iterpool);
 
-  SVN_ERR(dav_svn__send_xml(lrb->bb, lrb->output, "</S:log-item>" DEBUG_CR));
+  SVN_ERR(dav_svn__brigade_puts(lrb->bb, lrb->output,
+                                "</S:log-item>" DEBUG_CR));
 
   return SVN_NO_ERROR;
 }
@@ -313,6 +324,7 @@ dav_svn__log_report(const dav_resource *resource,
   seen_revprop_element = FALSE;
 
   lrb.requested_custom_revprops = FALSE;
+  lrb.encode_binary_props = FALSE;
   for (child = doc->root->first_child; child != NULL; child = child->next)
     {
       /* if this element isn't one of ours, then skip it */
@@ -324,13 +336,25 @@ dav_svn__log_report(const dav_resource *resource,
       else if (strcmp(child->name, "end-revision") == 0)
         end = SVN_STR_TO_REV(dav_xml_get_cdata(child, resource->pool, 1));
       else if (strcmp(child->name, "limit") == 0)
-        limit = atoi(dav_xml_get_cdata(child, resource->pool, 1));
+        {
+          serr = svn_cstring_atoi(&limit,
+                                  dav_xml_get_cdata(child, resource->pool, 1));
+          if (serr)
+            {
+              derr = dav_svn__convert_err(serr, HTTP_BAD_REQUEST,
+                                          "Malformed CDATA in element "
+                                          "\"limit\"", resource->pool);
+              goto cleanup;
+            }
+        }
       else if (strcmp(child->name, "discover-changed-paths") == 0)
         discover_changed_paths = TRUE; /* presence indicates positivity */
       else if (strcmp(child->name, "strict-node-history") == 0)
         strict_node_history = TRUE; /* presence indicates positivity */
       else if (strcmp(child->name, "include-merged-revisions") == 0)
         include_merged_revisions = TRUE; /* presence indicates positivity */
+      else if (strcmp(child->name, "encode-binary-props") == 0)
+        lrb.encode_binary_props = TRUE; /* presence indicates positivity */
       else if (strcmp(child->name, "all-revprops") == 0)
         {
           revprops = NULL; /* presence indicates fetch all revprops */
@@ -362,8 +386,14 @@ dav_svn__log_report(const dav_resource *resource,
           const char *rel_path = dav_xml_get_cdata(child, resource->pool, 0);
           if ((derr = dav_svn__test_canonical(rel_path, resource->pool)))
             return derr;
-          target = svn_path_join(resource->info->repos_path, rel_path,
-                                 resource->pool);
+
+          /* Force REL_PATH to be a relative path, not an fspath. */
+          rel_path = svn_relpath_canonicalize(rel_path, resource->pool);
+
+          /* Append the REL_PATH to the base FS path to get an
+             absolute repository path. */
+          target = svn_fspath__join(resource->info->repos_path, rel_path,
+                                    resource->pool);
           APR_ARRAY_PUSH(paths, const char *) = target;
         }
       /* else unknown element; skip it */
@@ -424,8 +454,8 @@ dav_svn__log_report(const dav_resource *resource,
       goto cleanup;
     }
 
-  if ((serr = dav_svn__send_xml(lrb.bb, lrb.output, "</S:log-report>"
-                                DEBUG_CR)))
+  if ((serr = dav_svn__brigade_puts(lrb.bb, lrb.output,
+                                    "</S:log-report>" DEBUG_CR)))
     {
       derr = dav_svn__convert_err(serr, HTTP_INTERNAL_SERVER_ERROR,
                                   "Error ending REPORT response.",

@@ -2,17 +2,22 @@
  * nls.c :  Helpers for NLS programs.
  *
  * ====================================================================
- * Copyright (c) 2000-2005 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -33,15 +38,6 @@
 #include "svn_path.h"
 
 #include "svn_private_config.h"
-
-#ifdef WIN32
-/* FIXME: We're using an internal APR header here, which means we
-   have to build Subversion with APR sources. This being Win32-only,
-   that should be fine for now, but a better solution must be found in
-   combination with issue #850. */
-#include <arch/win32/apr_arch_utf8.h>
-#endif
-
 
 svn_error_t *
 svn_nls_init(void)
@@ -97,11 +93,11 @@ svn_nls_init(void)
         {
           outbytes = outlength = 3 * (inwords + 1);
           utf8_path = apr_palloc(pool, outlength);
-          apr_err = apr_conv_ucs2_to_utf8(ucs2_path, &inwords,
-                                          utf8_path, &outbytes);
-          if (!apr_err && (inwords > 0 || outbytes == 0))
-            apr_err = APR_INCOMPLETE;
-          if (apr_err)
+
+          outbytes = WideCharToMultiByte(CP_UTF8, 0, ucs2_path, inwords,
+                                         utf8_path, outbytes, NULL, NULL);
+
+          if (outbytes == 0)
             {
               err = svn_error_createf(apr_err, NULL,
                                       _("Can't convert module path "
@@ -111,12 +107,12 @@ svn_nls_init(void)
           else
             {
               utf8_path[outlength - outbytes] = '\0';
-              internal_path = svn_path_internal_style(utf8_path, pool);
+              internal_path = svn_dirent_internal_style(utf8_path, pool);
               /* get base path name */
-              internal_path = svn_path_dirname(internal_path, pool);
-              internal_path = svn_path_join(internal_path,
-                                            SVN_LOCALE_RELATIVE_PATH,
-                                            pool);
+              internal_path = svn_dirent_dirname(internal_path, pool);
+              internal_path = svn_dirent_join(internal_path,
+                                              SVN_LOCALE_RELATIVE_PATH,
+                                              pool);
               bindtextdomain(PACKAGE_NAME, internal_path);
             }
         }

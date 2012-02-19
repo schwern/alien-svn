@@ -2,17 +2,22 @@
  * win32_crypto.c: win32 providers for SVN_AUTH_*
  *
  * ====================================================================
- * Copyright (c) 2003-2006, 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -67,7 +72,7 @@ windows_password_encrypter(apr_hash_t *creds,
   if (crypted)
     {
       char *coded = apr_palloc(pool, apr_base64_encode_len(blobout.cbData));
-      apr_base64_encode(coded, blobout.pbData, blobout.cbData);
+      apr_base64_encode(coded, (const char*)blobout.pbData, blobout.cbData);
       crypted = svn_auth__simple_password_set(creds, realmstring, username,
                                               coded, parameters,
                                               non_interactive, pool);
@@ -101,13 +106,13 @@ windows_password_decrypter(const char **out,
 
   blobin.cbData = strlen(in);
   blobin.pbData = apr_palloc(pool, apr_base64_decode_len(in));
-  apr_base64_decode(blobin.pbData, in);
+  apr_base64_decode((char*)blobin.pbData, in);
   decrypted = CryptUnprotectData(&blobin, &descr, NULL, NULL, NULL,
                                  CRYPTPROTECT_UI_FORBIDDEN, &blobout);
   if (decrypted)
     {
       if (0 == lstrcmpW(descr, description))
-        *out = apr_pstrndup(pool, blobout.pbData, blobout.cbData);
+        *out = apr_pstrndup(pool, (const char*)blobout.pbData, blobout.cbData);
       else
         decrypted = FALSE;
       LocalFree(blobout.pbData);
@@ -201,7 +206,7 @@ windows_ssl_client_cert_pw_encrypter(apr_hash_t *creds,
   if (crypted)
     {
       char *coded = apr_palloc(pool, apr_base64_encode_len(blobout.cbData));
-      apr_base64_encode(coded, blobout.pbData, blobout.cbData);
+      apr_base64_encode(coded, (const char*)blobout.pbData, blobout.cbData);
       crypted = svn_auth__ssl_client_cert_pw_set(creds, realmstring, username,
                                                  coded, parameters,
                                                  non_interactive, pool);
@@ -235,13 +240,13 @@ windows_ssl_client_cert_pw_decrypter(const char **out,
 
   blobin.cbData = strlen(in);
   blobin.pbData = apr_palloc(pool, apr_base64_decode_len(in));
-  apr_base64_decode(blobin.pbData, in);
+  apr_base64_decode((char*)blobin.pbData, in);
   decrypted = CryptUnprotectData(&blobin, &descr, NULL, NULL, NULL,
                                  CRYPTPROTECT_UI_FORBIDDEN, &blobout);
   if (decrypted)
     {
       if (0 == lstrcmpW(descr, description))
-        *out = apr_pstrndup(pool, blobout.pbData, blobout.cbData);
+        *out = apr_pstrndup(pool, (const char*)blobout.pbData, blobout.cbData);
       else
         decrypted = FALSE;
       LocalFree(blobout.pbData);
@@ -317,6 +322,28 @@ svn_auth_get_windows_ssl_client_cert_pw_provider
 /* CryptoApi.                                                            */
 /*-----------------------------------------------------------------------*/
 
+/* Helper to create CryptoAPI CERT_CONTEXT from base64 encoded BASE64_CERT.
+ * Returns NULL on error.
+ */
+static PCCERT_CONTEXT
+certcontext_from_base64(const char *base64_cert, apr_pool_t *pool)
+{
+  PCCERT_CONTEXT cert_context = NULL;
+  int cert_len;
+  BYTE *binary_cert;
+
+  /* Use apr-util as CryptStringToBinaryA is available only on XP+. */
+  binary_cert = apr_palloc(pool,
+                           apr_base64_decode_len(base64_cert));
+  cert_len = apr_base64_decode((char*)binary_cert, base64_cert);
+
+  /* Parse the certificate into a context. */
+  cert_context = CertCreateCertificateContext
+    (X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, binary_cert, cert_len);
+
+  return cert_context;
+}
+
 /* Helper for windows_ssl_server_trust_first_credentials for validating
  * certificate using CryptoApi. Sets *OK_P to TRUE if base64 encoded ASCII_CERT
  * certificate considered as valid.
@@ -329,19 +356,11 @@ windows_validate_certificate(svn_boolean_t *ok_p,
   PCCERT_CONTEXT cert_context = NULL;
   CERT_CHAIN_PARA chain_para;
   PCCERT_CHAIN_CONTEXT chain_context = NULL;
-  int cert_len;
-  char *binary_cert;
 
   *ok_p = FALSE;
 
-  /* Use apr-util as CryptStringToBinaryA is available only on XP+. */
-  binary_cert = apr_palloc(pool,
-                           apr_base64_decode_len(ascii_cert));
-  cert_len = apr_base64_decode(binary_cert, ascii_cert);
-
   /* Parse the certificate into a context. */
-  cert_context = CertCreateCertificateContext
-    (X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, binary_cert, cert_len);
+  cert_context = certcontext_from_base64(ascii_cert, pool);
 
   if (cert_context)
     {

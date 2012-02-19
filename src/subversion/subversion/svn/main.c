@@ -2,17 +2,22 @@
  * main.c:  Subversion command line client.
  *
  * ====================================================================
- * Copyright (c) 2000-2009 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -36,6 +41,7 @@
 #include "svn_client.h"
 #include "svn_config.h"
 #include "svn_string.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_delta.h"
 #include "svn_diff.h"
@@ -45,7 +51,11 @@
 #include "svn_utf.h"
 #include "svn_auth.h"
 #include "svn_hash.h"
+#include "svn_version.h"
 #include "cl.h"
+
+#include "private/svn_wc_private.h"
+#include "private/svn_cmdline_private.h"
 
 #include "svn_private_config.h"
 
@@ -55,7 +65,7 @@
 /* Add an identifier here for long options that don't have a short
    option. Options that have both long and short options should just
    use the short option letter as identifier.  */
-typedef enum {
+typedef enum svn_cl__longopt_t {
   opt_ancestor_path = SVN_OPT_FIRST_LONGOPT_ID,
   opt_auth_password,
   opt_auth_username,
@@ -104,8 +114,18 @@ typedef enum {
   opt_accept,
   opt_show_revs,
   opt_reintegrate,
-  opt_trust_server_cert
+  opt_trust_server_cert,
+  opt_strip,
+  opt_show_copies_as_adds,
+  opt_ignore_keywords,
+  opt_reverse_diff,
+  opt_ignore_whitespace,
+  opt_diff,
+  opt_internal_diff,
+  opt_use_git_diff_format,
+  opt_allow_mixed_revisions
 } svn_cl__longopt_t;
+
 
 /* Option codes and descriptions for the command line client.
  *
@@ -122,21 +142,26 @@ const apr_getopt_option_t svn_cl__options[] =
   {"quiet",         'q', 0, N_("print nothing, or only summary information")},
   {"recursive",     'R', 0, N_("descend recursively, same as --depth=infinity")},
   {"non-recursive", 'N', 0, N_("obsolete; try --depth=files or --depth=immediates")},
-  {"change",        'c', 1, N_
-   ("the change made by revision ARG (like -r ARG-1:ARG)\n"
-    "                             If ARG is negative this is like -r ARG:ARG-1")
-  },
-  {"revision",      'r', 1, N_
-   ("ARG (some commands also take ARG1:ARG2 range)\n"
-    "                             A revision argument can be one of:\n"
-    "                                NUMBER       revision number\n"
-    "                                '{' DATE '}' revision at start of the date\n"
-    "                                'HEAD'       latest in repository\n"
-    "                                'BASE'       base rev of item's working copy\n"
-    "                                'COMMITTED'  last commit at or before BASE\n"
-    "                                'PREV'       revision just before COMMITTED")
-   /* spacing corresponds to svn_opt_format_option */
-  },
+  {"change",        'c', 1,
+                    N_("the change made by revision ARG (like -r ARG-1:ARG)\n"
+                       "                             "
+                       "If ARG is negative this is like -r ARG:ARG-1")},
+  {"revision",      'r', 1,
+                    N_("ARG (some commands also take ARG1:ARG2 range)\n"
+                       "                             "
+                       "A revision argument can be one of:\n"
+                       "                             "
+                       "   NUMBER       revision number\n"
+                       "                             "
+                       "   '{' DATE '}' revision at start of the date\n"
+                       "                             "
+                       "   'HEAD'       latest in repository\n"
+                       "                             "
+                       "   'BASE'       base rev of item's working copy\n"
+                       "                             "
+                       "   'COMMITTED'  last commit at or before BASE\n"
+                       "                             "
+                       "   'PREV'       revision just before COMMITTED")},
   {"file",          'F', 1, N_("read log message from file ARG")},
   {"incremental",   opt_incremental, 0,
                     N_("give output suitable for concatenation")},
@@ -149,45 +174,45 @@ const apr_getopt_option_t svn_cl__options[] =
   {"password",      opt_auth_password, 1, N_("specify a password ARG")},
   {"extensions",    'x', 1,
                     N_("Default: '-u'. When Subversion is invoking an\n"
-                       "                            "
-                       " external diff program, ARG is simply passed along\n"
-                       "                            "
-                       " to the program. But when Subversion is using its\n"
-                       "                            "
-                       " default internal diff implementation, or when\n"
-                       "                            "
-                       " Subversion is displaying blame annotations, ARG\n"
-                       "                            "
-                       " could be any of the following:\n"
-                       "                            "
-                       "    -u (--unified):\n"
-                       "                            "
-                       "       Output 3 lines of unified context.\n"
-                       "                            "
-                       "    -b (--ignore-space-change):\n"
-                       "                            "
-                       "       Ignore changes in the amount of white space.\n"
-                       "                            "
-                       "    -w (--ignore-all-space):\n"
-                       "                            "
-                       "       Ignore all white space.\n"
-                       "                            "
-                       "    --ignore-eol-style:\n"
-                       "                            "
-                       "       Ignore changes in EOL style.\n"
-                       "                            "
-                       "    -p (--show-c-function):\n"
-                       "                            "
-                       "       Show C function name in diff output.")},
+                       "                             "
+                       "external diff program, ARG is simply passed along\n"
+                       "                             "
+                       "to the program. But when Subversion is using its\n"
+                       "                             "
+                       "default internal diff implementation, or when\n"
+                       "                             "
+                       "Subversion is displaying blame annotations, ARG\n"
+                       "                             "
+                       "could be any of the following:\n"
+                       "                             "
+                       "   -u (--unified):\n"
+                       "                             "
+                       "      Output 3 lines of unified context.\n"
+                       "                             "
+                       "   -b (--ignore-space-change):\n"
+                       "                             "
+                       "      Ignore changes in the amount of white space.\n"
+                       "                             "
+                       "   -w (--ignore-all-space):\n"
+                       "                             "
+                       "      Ignore all white space.\n"
+                       "                             "
+                       "   --ignore-eol-style:\n"
+                       "                             "
+                       "      Ignore changes in EOL style.\n"
+                       "                             "
+                       "   -p (--show-c-function):\n"
+                       "                             "
+                       "      Show C function name in diff output.")},
   {"targets",       opt_targets, 1,
                     N_("pass contents of file ARG as additional args")},
   {"depth",         opt_depth, 1,
                     N_("limit operation by depth ARG ('empty', 'files',\n"
-                       "                            "
+                       "                             "
                        "'immediates', or 'infinity')")},
   {"set-depth",     opt_set_depth, 1,
                     N_("set new working copy depth to ARG ('exclude',\n"
-                       "                            "
+                       "                             "
                        "'empty', 'files', 'immediates', or 'infinity')")},
   {"xml",           opt_xml, 0, N_("output in XML")},
   {"strict",        opt_strict, 0, N_("use strict semantics")},
@@ -198,9 +223,11 @@ const apr_getopt_option_t svn_cl__options[] =
   {"no-auth-cache", opt_no_auth_cache, 0,
                     N_("do not cache authentication tokens")},
   {"trust-server-cert", opt_trust_server_cert, 0,
-                    N_("accept unknown SSL server certificates without\n"
+                    N_("accept SSL server certificates from unknown\n"
                        "                             "
-                       "prompting (but only with '--non-interactive')")},
+                       "certificate authorities without prompting (but only\n"
+                       "                             "
+                       "with '--non-interactive')") },
   {"non-interactive", opt_non_interactive, 0,
                     N_("do no interactive prompting")},
   {"dry-run",       opt_dry_run, 0,
@@ -217,7 +244,7 @@ const apr_getopt_option_t svn_cl__options[] =
   {"diff3-cmd",     opt_merge_cmd, 1, N_("use ARG as merge command")},
   {"editor-cmd",    opt_editor_cmd, 1, N_("use ARG as external editor")},
   {"record-only",   opt_record_only, 0,
-                    N_("mark revisions as merged (use with -r)")},
+                    N_("merge only mergeinfo differences")},
   {"old",           opt_old_cmd, 1, N_("use ARG as the older target")},
   {"new",           opt_new_cmd, 1, N_("use ARG as the newer target")},
   {"revprop",       opt_revprop, 0,
@@ -232,7 +259,7 @@ const apr_getopt_option_t svn_cl__options[] =
                        "                             "
                        "For example:\n"
                        "                             "
-                       "    servers:global:http-library=serf\n")},
+                       "    servers:global:http-library=serf")},
   {"auto-props",    opt_autoprops, 0, N_("enable automatic properties")},
   {"no-auto-props", opt_no_autoprops, 0, N_("disable automatic properties")},
   {"native-eol",    opt_native_eol, 1,
@@ -248,9 +275,7 @@ const apr_getopt_option_t svn_cl__options[] =
   {"summarize",     opt_summarize, 0, N_("show a summary of the results")},
   {"remove",         opt_remove, 0, N_("remove changelist association")},
   {"changelist",    opt_changelist, 1,
-                    N_("operate only on members of changelist ARG\n"
-                       "                             "
-                       "[aliases: --cl]")},
+                    N_("operate only on members of changelist ARG")},
   {"keep-changelists", opt_keep_changelists, 0,
                     N_("don't delete changelists after commit")},
   {"keep-local",    opt_keep_local, 0, N_("keep path in working copy")},
@@ -269,18 +294,56 @@ const apr_getopt_option_t svn_cl__options[] =
                        "history")},
   {"accept",        opt_accept, 1,
                     N_("specify automatic conflict resolution action\n"
-                       "                            "
-                       "('postpone', 'base', 'mine-conflict',\n"
-                       "                            "
-                       " 'theirs-conflict', 'mine-full', 'theirs-full',\n"
-                       "                            "
-                       " 'edit', 'launch')")},
+                       "                             "
+                       "('postpone', 'working', 'base', 'mine-conflict',\n"
+                       "                             "
+                       "'theirs-conflict', 'mine-full', 'theirs-full',\n"
+                       "                             "
+                       "'edit', 'launch')\n"
+                       "                             "
+                       "(shorthand: 'p', 'mc', 'tc', 'mf', 'tf', 'e', 'l')"
+                       )},
   {"show-revs",     opt_show_revs, 1,
                     N_("specify which collection of revisions to display\n"
                        "                             "
                        "('merged', 'eligible')")},
   {"reintegrate",   opt_reintegrate, 0,
-                    N_("lump-merge all of source URL's unmerged changes")},
+                    N_("merge a branch back into its parent branch")},
+  {"strip",         opt_strip, 1,
+                    N_("number of leading path components to strip from\n"
+                       "                             "
+                       "paths parsed from the patch file. --strip 0\n"
+                       "                             "
+                       "is the default and leaves paths unmodified.\n"
+                       "                             "
+                       "--strip 1 would change the path\n"
+                       "                             "
+                       "'doc/fudge/crunchy.html' to 'fudge/crunchy.html'.\n"
+                       "                             "
+                       "--strip 2 would leave just 'crunchy.html'\n"
+                       "                             "
+                       "The expected component separator is '/' on all\n"
+                       "                             "
+                       "platforms. A leading '/' counts as one component.")},
+  {"show-copies-as-adds", opt_show_copies_as_adds, 0,
+                    N_("don't diff copied or moved files with their source")},
+  {"ignore-keywords", opt_ignore_keywords, 0,
+                    N_("don't expand keywords")},
+  {"reverse-diff", opt_reverse_diff, 0,
+                    N_("apply the unidiff in reverse")},
+  {"ignore-whitespace", opt_ignore_whitespace, 0,
+                       N_("ignore whitespace during pattern matching")},
+  {"diff", opt_diff, 0, N_("produce diff output")}, /* maps to show_diff */
+  {"internal-diff", opt_internal_diff, 0,
+                       N_("override diff-cmd specified in config file")},
+  {"git", opt_use_git_diff_format, 0,
+                       N_("use git's extended diff format")},
+  {"allow-mixed-revisions", opt_allow_mixed_revisions, 0,
+                       N_("Allow merge into mixed-revision working copy.\n"
+                       "                             "
+                       "Use of this option is not recommended!\n"
+                       "                             "
+                       "Please run 'svn update' instead.")},
 
   /* Long-opt Aliases
    *
@@ -353,8 +416,8 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
 
   { "changelist", svn_cl__changelist, {"cl"}, N_
     ("Associate (or dissociate) changelist CLNAME with the named files.\n"
-     "usage: 1. changelist CLNAME TARGET...\n"
-     "       2. changelist --remove TARGET...\n"),
+     "usage: 1. changelist CLNAME PATH...\n"
+     "       2. changelist --remove PATH...\n"),
     { 'q', 'R', opt_depth, opt_remove, opt_targets, opt_changelist} },
 
   { "checkout", svn_cl__checkout, {"co"}, N_
@@ -387,7 +450,7 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
   { "cleanup", svn_cl__cleanup, {0}, N_
     ("Recursively clean up the working copy, removing locks, resuming\n"
      "unfinished operations, etc.\n"
-     "usage: cleanup [PATH...]\n"),
+     "usage: cleanup [WCPATH...]\n"),
     {opt_merge_cmd} },
 
   { "commit", svn_cl__commit, {"ci"},
@@ -433,7 +496,7 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "    committed, are immediately removed from the working copy\n"
      "    unless the --keep-local option is given.\n"
      "    PATHs that are, or contain, unversioned or modified items will\n"
-     "    not be removed unless the --force option is given.\n"
+     "    not be removed unless the --force or --keep-local option is given.\n"
      "\n"
      "  2. Each item specified by a URL is deleted from the repository\n"
      "    via an immediate commit.\n"),
@@ -463,10 +526,10 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "  3. Shorthand for 'svn diff --old=OLD-URL[@OLDREV] --new=NEW-URL[@NEWREV]'\n"
      "\n"
      "  Use just 'svn diff' to display local modifications in a working copy.\n"),
-    {'r', 'c', opt_old_cmd, opt_new_cmd, 'N', opt_depth, opt_diff_cmd, 'x',
-     opt_no_diff_deleted, opt_notice_ancestry, opt_summarize, opt_changelist,
-     opt_force, opt_xml} },
-
+    {'r', 'c', opt_old_cmd, opt_new_cmd, 'N', opt_depth, opt_diff_cmd,
+     opt_internal_diff, 'x', opt_no_diff_deleted, opt_show_copies_as_adds,
+     opt_notice_ancestry, opt_summarize, opt_changelist, opt_force, opt_xml,
+     opt_use_git_diff_format} },
   { "export", svn_cl__export, {0}, N_
     ("Create an unversioned copy of a tree.\n"
      "usage: 1. export [-r REV] URL[@PEGREV] [PATH]\n"
@@ -486,7 +549,8 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "\n"
      "  If specified, PEGREV determines in which revision the target is first\n"
      "  looked up.\n"),
-    {'r', 'q', 'N', opt_depth, opt_force, opt_native_eol, opt_ignore_externals} },
+    {'r', 'q', 'N', opt_depth, opt_force, opt_native_eol, opt_ignore_externals,
+     opt_ignore_keywords} },
 
   { "help", svn_cl__help, {"?", "h"}, N_
     ("Describe the usage of this program or its subcommands.\n"
@@ -551,15 +615,18 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      {opt_force_log, N_("force validity of lock comment source")}} },
 
   { "log", svn_cl__log, {0}, N_
-    ("Show the log messages for a set of revision(s) and/or file(s).\n"
-     "usage: 1. log [PATH]\n"
+    ("Show the log messages for a set of revision(s) and/or path(s).\n"
+     "usage: 1. log [PATH][@REV]\n"
      "       2. log URL[@REV] [PATH...]\n"
      "\n"
-     "  1. Print the log messages for a local PATH (default: '.').\n"
-     "     The default revision range is BASE:1.\n"
+     "  1. Print the log messages for the URL corresponding to PATH\n"
+     "     (default: '.'). If specified, REV is the revision in which the\n"
+     "     URL is first looked up, and the default revision range is REV:1.\n"
+     "     If REV is not specified, the default revision range is BASE:1,\n"
+     "     since the URL might not exist in the HEAD revision.\n"
      "\n"
      "  2. Print the log messages for the PATHs (default: '.') under URL.\n"
-     "     If specified, REV determines in which revision the URL is first\n"
+     "     If specified, REV is the revision in which the URL is first\n"
      "     looked up, and the default revision range is REV:1; otherwise,\n"
      "     the URL is looked up in HEAD, and the default revision range is\n"
      "     HEAD:1.\n"
@@ -577,64 +644,363 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "  follow copy history by default.  Use --stop-on-copy to disable this\n"
      "  behavior, which can be useful for determining branchpoints.\n"
      "\n"
+     "  The --depth option is only valid in combination with the --diff option\n"
+     "  and limits the scope of the displayed diff to the specified depth.\n"
+
+     "\n"
      "  Examples:\n"
      "    svn log\n"
      "    svn log foo.c\n"
+     "    svn log bar.c@42\n"
      "    svn log http://www.example.com/repo/project/foo.c\n"
-     "    svn log http://www.example.com/repo/project foo.c bar.c\n"),
+     "    svn log http://www.example.com/repo/project foo.c bar.c\n"
+     "    svn log http://www.example.com/repo/project@50 foo.c bar.c\n"),
     {'r', 'q', 'v', 'g', 'c', opt_targets, opt_stop_on_copy, opt_incremental,
-     opt_xml, 'l', opt_with_all_revprops, opt_with_no_revprops, opt_with_revprop},
+     opt_xml, 'l', opt_with_all_revprops, opt_with_no_revprops, opt_with_revprop,
+     opt_depth, opt_diff, opt_diff_cmd, opt_internal_diff, 'x'},
     {{opt_with_revprop, N_("retrieve revision property ARG")},
      {'c', N_("the change made in revision ARG")}} },
 
   { "merge", svn_cl__merge, {0}, N_
-    ("Apply the differences between two sources to a working copy path.\n"
-     "usage: 1. merge sourceURL1[@N] sourceURL2[@M] [WCPATH]\n"
-     "       2. merge sourceWCPATH1@N sourceWCPATH2@M [WCPATH]\n"
-     "       3. merge [-c M[,N...] | -r N:M ...] SOURCE[@REV] [WCPATH]\n"
-     "\n"
-     "  1. In the first form, the source URLs are specified at revisions\n"
-     "     N and M.  These are the two sources to be compared.  The revisions\n"
-     "     default to HEAD if omitted.\n"
-     "\n"
-     "  2. In the second form, the URLs corresponding to the source working\n"
-     "     copy paths define the sources to be compared.  The revisions must\n"
-     "     be specified.\n"
-     "\n"
-     "  3. In the third form, SOURCE can be either a URL or a working copy\n"
-     "     path (in which case its corresponding URL is used).  SOURCE (in\n"
-     "     revision REV) is compared as it existed between revisions N and M\n"
-     "     for each revision range provided.  If REV is not specified, HEAD\n"
-     "     is assumed.  '-c M' is equivalent to '-r <M-1>:M', and '-c -M'\n"
-     "     does the reverse: '-r M:<M-1>'.  If no revision ranges are\n"
-     "     specified, the default range of 0:REV is used.  Multiple '-c'\n"
-     "     and/or '-r' options may be specified, and mixing of forward\n"
-     "     and reverse ranges is allowed.\n"
-     "\n"
-     "  WCPATH is the working copy path that will receive the changes.\n"
-     "  If WCPATH is omitted, a default value of '.' is assumed, unless\n"
-     "  the sources have identical basenames that match a file within '.':\n"
-     "  in which case, the differences will be applied to that file.\n"
-     "\n"
-     "  NOTE:  Subversion will only record metadata to track the merge\n"
-     "  if the two sources are on the same line of history -- if the\n"
-     "  first source is an ancestor of the second, or vice-versa.  This is\n"
-     "  guaranteed to be the case when using the third form listed above.\n"
-     "  The --ignore-ancestry option overrides this, forcing Subversion to\n"
-     "  regard the sources as unrelated and not to track the merge.\n"),
+    ( /* For this large section, let's keep it unindented for easier
+       * viewing/editing. It has been vim-treated with a textwidth=75 and 'gw'
+       * (with quotes and newlines removed). */
+"Merge changes into a working copy.\n"
+"usage: 1. merge SOURCE[@REV] [TARGET_WCPATH]\n"
+"          (the 'sync' merge)\n"
+"       2. merge [-c M[,N...] | -r N:M ...] SOURCE[@REV] [TARGET_WCPATH]\n"
+"          (the 'cherry-pick' merge)\n"
+"       3. merge --reintegrate SOURCE[@REV] [TARGET_WCPATH]\n"
+"          (the 'reintegrate' merge)\n"
+"       4. merge SOURCE1[@N] SOURCE2[@M] [TARGET_WCPATH]\n"
+"          (the '2-URL' merge)\n"
+"\n"
+"  1. This form is called a 'sync' (or 'catch-up') merge:\n"
+"\n"
+"       svn merge SOURCE[@REV] [TARGET_WCPATH]\n"
+"\n"
+"     A sync merge is used to fetch all the latest changes made on a parent\n"
+"     branch. In other words, the target branch has originally been created\n"
+"     by copying the source branch, and any changes committed on the source\n"
+"     branch since branching are applied to the target branch. This uses\n"
+"     merge tracking to skip all those revisions that have already been\n"
+"     merged, so a sync merge can be repeated periodically to stay up-to-\n"
+"     date with the source branch.\n"
+"\n"
+"     SOURCE specifies the branch from where the changes will be pulled, and\n"
+"     TARGET_WCPATH specifies a working copy of the target branch to which\n"
+"     the changes will be applied. Normally SOURCE and TARGET_WCPATH should\n"
+"     each correspond to the root of a branch. (If you want to merge only a\n"
+"     subtree, then the subtree path must be included in both SOURCE and\n"
+"     TARGET_WCPATH; this is discouraged, to avoid subtree mergeinfo.)\n"
+"\n"
+"     SOURCE is usually a URL. The optional '@REV' specifies both the peg\n"
+"     revision of the URL and the latest revision that will be considered\n"
+"     for merging; if REV is not specified, the HEAD revision is assumed. If\n"
+"     SOURCE is a working copy path, the corresponding URL of the path is\n"
+"     used, and the default value of 'REV' is the base revision (usually the\n"
+"     revision last updated to).\n"
+"\n"
+"     TARGET_WCPATH is a working copy path; if omitted, '.' is assumed.\n"
+"\n"
+"       - Sync Merge Example -\n"
+"\n"
+"     A feature is being developed on a branch called 'feature', which has\n"
+"     originally been a copy of trunk. The feature branch has been regularly\n"
+"     synced with trunk to keep up with the changes made there. The previous\n"
+"     sync merges are not shown on this diagram, and the last of them was\n"
+"     done when HEAD was r100. Currently, HEAD is r200.\n"
+"\n"
+"                feature  +------------------------o-----\n"
+"                        /                         ^\n"
+"                       /            ............  |\n"
+"                      /            .            . /\n"
+"         trunk ------+------------L--------------R------\n"
+"                                r100           r200\n"
+"\n"
+"     Subversion will locate all the changes on 'trunk' that have not yet\n"
+"     been merged into the 'feature' branch. In this case that is a single\n"
+"     range, r100:200. In the diagram above, L marks the left side\n"
+"     (trunk@100) and R marks the right side (trunk@200) of the merge. The\n"
+"     difference between L and R will be applied to the target working copy\n"
+"     path. In this case, the working copy is a clean checkout of the entire\n"
+"     'feature' branch.\n"
+"\n"
+"     To perform this sync merge, have a clean working copy of the feature\n"
+"     branch and run the following command in its top-level directory:\n"
+"\n"
+"         svn merge ^/trunk\n"
+"\n"
+"     Note that the merge is now only in your local working copy and still\n"
+"     needs to be committed to the repository so that it can be seen by\n"
+"     others. You can review the changes and you may have to resolve\n"
+"     conflicts before you commit the merge.\n"
+"\n"
+"\n"
+"  2. This form is called a 'cherry-pick' merge:\n"
+"\n"
+"       svn merge [-c M[,N...] | -r N:M ...] SOURCE[@REV] [TARGET_WCPATH]\n"
+"\n"
+"     A cherry-pick merge is used to merge specific revisions (or revision\n"
+"     ranges) from one branch to another. By default, this uses merge\n"
+"     tracking to automatically skip any revisions that have already been\n"
+"     merged to the target; you can use the --ignore-ancestry option to\n"
+"     disable such skipping.\n"
+"\n"
+"     SOURCE is usually a URL. The optional '@REV' specifies only the peg\n"
+"     revision of the URL and does not affect the merge range; if REV is not\n"
+"     specified, the HEAD revision is assumed. If SOURCE is a working copy\n"
+"     path, the corresponding URL of the path is used, and the default value\n"
+"     of 'REV' is the base revision (usually the revision last updated to).\n"
+"\n"
+"     TARGET_WCPATH is a working copy path; if omitted, '.' is assumed.\n"
+"\n"
+"     The revision ranges to be merged are specified by the '-r' and/or '-c'\n"
+"     options. '-r N:M' refers to the difference in the history of the\n"
+"     source branch between revisions N and M. You can use '-c M' to merge\n"
+"     single revisions: '-c M' is equivalent to '-r <M-1>:M'. Each such\n"
+"     difference is applied to TARGET_WCPATH.\n"
+"\n"
+"     If the mergeinfo in TARGET_WCPATH indicates that revisions within the\n"
+"     range were already merged, changes made in those revisions are not\n"
+"     merged again. If needed, the range is broken into multiple sub-ranges,\n"
+"     and each sub-range is merged separately.\n"
+"\n"
+"     A 'reverse range' can be used to undo changes. For example, when\n"
+"     source and target refer to the same branch, a previously committed\n"
+"     revision can be 'undone'. In a reverse range, N is greater than M in\n"
+"     '-r N:M', or the '-c' option is used with a negative number: '-c -M'\n"
+"     is equivalent to '-r M:<M-1>'.\n"
+"\n"
+"     Multiple '-c' and/or '-r' options may be specified and mixing of\n"
+"     forward and reverse ranges is allowed.\n"
+"\n"
+"       - Cherry-pick Merge Example -\n"
+"\n"
+"     A bug has been fixed on trunk in revision 50. This fix needs to\n"
+"     be merged from trunk onto the release branch.\n"
+"\n"
+"            1.x-release  +-----------------------o-----\n"
+"                        /                        ^\n"
+"                       /                         |\n"
+"                      /                          |\n"
+"         trunk ------+--------------------------LR-----\n"
+"                                                r50\n"
+"\n"
+"     In the above diagram, L marks the left side (trunk@49) and R marks the\n"
+"     right side (trunk@50) of the merge. The difference between the left\n"
+"     and right side is applied to the target working copy path.\n"
+"\n"
+"     Note that the difference between revision 49 and 50 is exactly those\n"
+"     changes that were committed in revision 50, not including changes\n"
+"     committed in revision 49.\n"
+"\n"
+"     To perform the merge, have a clean working copy of the release branch\n"
+"     and run the following command in its top-level directory; remember\n"
+"     that the default target is '.':\n"
+"\n"
+"         svn merge -c50 ^/trunk\n"
+"\n"
+"     You can also cherry-pick several revisions and/or revision ranges:\n"
+"\n"
+"         svn merge -c50,54,60 -r65:68 ^/trunk\n"
+"\n"
+"\n"
+"  3. This form is called a 'reintegrate merge':\n"
+"\n"
+"       svn merge --reintegrate SOURCE[@REV] [TARGET_WCPATH]\n"
+"\n"
+"     In a reintegrate merge, an (e.g. feature) branch is merged back to its\n"
+"     originating branch. In other words, the source branch has originally\n"
+"     been created by copying the target branch, development has concluded\n"
+"     on the source branch and it should now be merged back into the target\n"
+"     branch.\n"
+"     \n"
+"     SOURCE is the URL of a branch to be merged back. If REV is specified,\n"
+"     it is used as the peg revision for SOURCE; if REV is not specified,\n"
+"     the HEAD revision is assumed.\n"
+"\n"
+"     TARGET_WCPATH is a working copy of the branch the changes will be\n"
+"     applied to.\n"
+"\n"
+"       - Reintegrate Merge Example -\n"
+"\n"
+"     A feature has been developed on a branch called 'feature'. The feature\n"
+"     branch started as a copy of trunk@W. Work on the feature has completed\n"
+"     and it should be merged back into the trunk.\n"
+"\n"
+"     The feature branch was last synced with trunk up to revision X. So the\n"
+"     difference between trunk@X and feature@HEAD contains the complete set\n"
+"     of changes that implement the feature, and no other changes. These\n"
+"     changes are applied to trunk.\n"
+"\n"
+"                feature  +--------------------------------R\n"
+"                        /                                . \\\n"
+"                       /                    .............   \\\n"
+"                      /                    .                 v\n"
+"         trunk ------+--------------------L------------------o\n"
+"                    rW                   rX\n"
+"\n"
+"     In the diagram above, L marks the left side (trunk@X) and R marks the\n"
+"     right side (feature@HEAD) of the merge. The difference between the\n"
+"     left and right side is merged into trunk, the target.\n"
+"\n"
+"     To perform the merge, have a clean working copy of trunk and run the\n"
+"     following command in its top-level directory:\n"
+"\n"
+"         svn merge --reintegrate ^/feature\n"
+"\n"
+"     To prevent unnecessary merge conflicts, a reintegrate merge requires\n"
+"     that TARGET_WCPATH is not a mixed-revision working copy, has no local\n"
+"     modifications, and has no switched subtrees.\n"
+"\n"
+"     A reintegrate merge also requires that the source branch is coherently\n"
+"     synced with the target -- in the above example, this means that all\n"
+"     revisions between the branch point W and the last merged revision X\n"
+"     are merged to the feature branch, so that there are no unmerged\n"
+"     revisions in-between.\n"
+"\n"
+"     After the reintegrate merge, the feature branch cannot be synced to\n"
+"     the trunk again without merge conflicts. If further work must be done\n"
+"     on the feature branch, it should be deleted and then re-created.\n"
+"\n"
+"\n"
+"  4. This form is called a '2-URL merge':\n"
+"\n"
+"       svn merge SOURCE1[@N] SOURCE2[@M] [TARGET_WCPATH]\n"
+"\n"
+"     Two source URLs are specified, together with two revisions N and M.\n"
+"     The two sources are compared at the specified revisions, and the\n"
+"     difference is applied to TARGET_WCPATH, which is a path to a working\n"
+"     copy of another branch. The three branches involved can be completely\n"
+"     unrelated.\n"
+"\n"
+"     You should use this merge variant only if the other variants do not\n"
+"     apply to your situation, as this variant can be quite complex to\n"
+"     master.\n"
+"\n"
+"     If TARGET_WCPATH is omitted, a default value of '.' is assumed.\n"
+"     However, in the special case where both sources refer to a file node\n"
+"     with the same basename and a similarly named file is also found within\n"
+"     '.', the differences will be applied to that local file.  The source\n"
+"     revisions default to HEAD if omitted.\n"
+"\n"
+"     The sources can also be specified as working copy paths, in which case\n"
+"     the URLs of the merge sources are derived from the working copies.\n"
+"\n"
+"       - 2-URL Merge Example -\n"
+"\n"
+"     Two features have been developed on separate branches called 'foo' and\n"
+"     'bar'. It has since become clear that 'bar' should be combined with\n"
+"     the 'foo' branch for further development before reintegration.\n"
+"\n"
+"     Although both feature branches originate from trunk, they are not\n"
+"     directly related -- one is not a direct copy of the other. A 2-URL\n"
+"     merge is necessary.\n"
+"\n"
+"     The 'bar' branch has been synced with trunk up to revision 500.\n"
+"     (If this revision number is not known, it can be located using the\n"
+"     'svn log' and/or 'svn mergeinfo' commands.)\n"
+"     The difference between trunk@500 and bar@HEAD contains the complete\n"
+"     set of changes related to feature 'bar', and no other changes. These\n"
+"     changes are applied to the 'foo' branch.\n"
+"\n"
+"                           foo  +-----------------------------------o\n"
+"                               /                                    ^\n"
+"                              /                                    /\n"
+"                             /              r500                  /\n"
+"         trunk ------+------+-----------------L--------->        /\n"
+"                      \\                        .                /\n"
+"                       \\                        ............   /\n"
+"                        \\                                   . /\n"
+"                    bar  +-----------------------------------R\n"
+"\n"
+"     In the diagram above, L marks the left side (trunk@500) and R marks\n"
+"     the right side (bar@HEAD) of the merge. The difference between the\n"
+"     left and right side is applied to the target working copy path, in\n"
+"     this case a working copy of the 'foo' branch.\n"
+"\n"
+"     To perform the merge, have a clean working copy of the 'foo' branch\n"
+"     and run the following command in its top-level directory:\n"
+"\n"
+"         svn merge ^/trunk@500 ^/bar\n"
+"\n"
+"     The exact changes applied by a 2-URL merge can be previewed with svn's\n"
+"     diff command, which is a good idea to verify if you do not have the\n"
+"     luxury of a clean working copy to merge to. In this case:\n"
+"\n"
+"         svn diff ^/trunk@500 ^/bar@HEAD\n"
+"\n"
+"\n"
+"  The following applies to all types of merges:\n"
+"\n"
+"  To prevent unnecessary merge conflicts, svn merge requires that\n"
+"  TARGET_WCPATH is not a mixed-revision working copy. Running 'svn update'\n"
+"  before starting a merge ensures that all items in the working copy are\n"
+"  based on the same revision.\n"
+"\n"
+"  If possible, you should have no local modifications in the merge's target\n"
+"  working copy prior to the merge, to keep things simpler. It will be\n"
+"  easier to revert the merge and to understand the branch's history.\n"
+"\n"
+"  Switched sub-paths should also be avoided during merging, as they may\n"
+"  cause incomplete merges and create subtree mergeinfo.\n"
+"\n"
+"  For each merged item a line will be printed with characters reporting the\n"
+"  action taken. These characters have the following meaning:\n"
+"\n"
+"    A  Added\n"
+"    D  Deleted\n"
+"    U  Updated\n"
+"    C  Conflict\n"
+"    G  Merged\n"
+"    E  Existed\n"
+"    R  Replaced\n"
+"\n"
+"  Characters in the first column report about the item itself.\n"
+"  Characters in the second column report about properties of the item.\n"
+"  A 'C' in the third column indicates a tree conflict, while a 'C' in\n"
+"  the first and second columns indicate textual conflicts in files\n"
+"  and in property values, respectively.\n"
+"\n"
+"    - Merge Tracking -\n"
+"\n"
+"  Subversion uses the svn:mergeinfo property to track merge history. This\n"
+"  property is considered at the start of a merge to determine what to merge\n"
+"  and it is updated at the conclusion of the merge to describe the merge\n"
+"  that took place. Mergeinfo is used only if the two sources are on the\n"
+"  same line of history -- if the first source is an ancestor of the second,\n"
+"  or vice-versa (i.e. if one has originally been created by copying the\n"
+"  other). This is verified and enforced when using sync merges and\n"
+"  reintegrate merges.\n"
+"\n"
+"  The --ignore-ancestry option prevents merge tracking and thus ignores\n"
+"  mergeinfo, neither considering it nor recording it.\n"
+"\n"
+"    - Merging from foreign repositories -\n"
+"\n"
+"  Subversion does support merging from foreign repositories.\n"
+"  While all merge source URLs must point to the same repository, the merge\n"
+"  target working copy may come from a different repository than the source.\n"
+"  However, there are some caveats. Most notably, copies made in the\n"
+"  merge source will be transformed into plain additions in the merge\n"
+"  target. Also, merge-tracking is not supported for merges from foreign\n"
+"  repositories.\n"),
     {'r', 'c', 'N', opt_depth, 'q', opt_force, opt_dry_run, opt_merge_cmd,
-     opt_record_only, 'x', opt_ignore_ancestry, opt_accept, opt_reintegrate} },
+     opt_record_only, 'x', opt_ignore_ancestry, opt_accept, opt_reintegrate,
+     opt_allow_mixed_revisions} },
 
   { "mergeinfo", svn_cl__mergeinfo, {0}, N_
     ("Display merge-related information.\n"
      "usage: mergeinfo SOURCE[@REV] [TARGET[@REV]]\n"
      "\n"
      "  Display information related to merges (or potential merges) between\n"
-     "  SOURCE and TARGET (default: '.').  If the --show-revs option\n"
-     "  is not provided, display revisions which have been merged from\n"
-     "  SOURCE to TARGET; otherwise, display the type of information\n"
-     "  specified by the --show-revs option.\n"),
-    {'r', opt_show_revs} },
+     "  SOURCE and TARGET (default: '.').  Display the type of information\n"
+     "  specified by the --show-revs option.  If --show-revs isn't passed,\n"
+     "  it defaults to --show-revs='merged'.\n"
+     "\n"
+     "  The depth can be 'empty' or 'infinity'; the default is 'empty'.\n"),
+    {'r', 'R', opt_depth, opt_show_revs} },
 
   { "mkdir", svn_cl__mkdir, {0}, N_
     ("Create a new directory under version control.\n"
@@ -668,6 +1034,53 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "    URL -> URL:  complete server-side rename.\n"
      "  All the SRCs must be of the same type.\n"),
     {'r', 'q', opt_force, opt_parents, SVN_CL__LOG_MSG_OPTIONS} },
+
+  { "patch", svn_cl__patch, {0}, N_
+    ("Apply a patch to a working copy.\n"
+     "usage: patch PATCHFILE [WCPATH]\n"
+     "\n"
+     "  Apply a unidiff patch in PATCHFILE to the working copy WCPATH.\n"
+     "  If WCPATH is omitted, '.' is assumed.\n"
+     "\n"
+     "  A unidiff patch suitable for application to a working copy can be\n"
+     "  produced with the 'svn diff' command or third-party diffing tools.\n"
+     "  Any non-unidiff content of PATCHFILE is ignored.\n"
+     "\n"
+     "  Changes listed in the patch will either be applied or rejected.\n"
+     "  If a change does not match at its exact line offset, it may be applied\n"
+     "  earlier or later in the file if a match is found elsewhere for the\n"
+     "  surrounding lines of context provided by the patch.\n"
+     "  A change may also be applied with fuzz, which means that one\n"
+     "  or more lines of context are ignored when matching the change.\n"
+     "  If no matching context can be found for a change, the change conflicts\n"
+     "  and will be written to a reject file with the extension .svnpatch.rej.\n"
+     "\n"
+     "  For each patched file a line will be printed with characters reporting\n"
+     "  the action taken. These characters have the following meaning:\n"
+     "\n"
+     "    A  Added\n"
+     "    D  Deleted\n"
+     "    U  Updated\n"
+     "    C  Conflict\n"
+     "    G  Merged (with local uncommitted changes)\n"
+     "\n"
+     "  Changes applied with an offset or fuzz are reported on lines starting\n"
+     "  with the '>' symbol. You should review such changes carefully.\n"
+     "\n"
+     "  If the patch removes all content from a file, that file is scheduled\n"
+     "  for deletion. If the patch creates a new file, that file is scheduled\n"
+     "  for addition. Use 'svn revert' to undo deletions and additions you\n"
+     "  do not agree with.\n"
+     "\n"
+     "  Hint: If the patch file was created with Subversion, it will contain\n"
+     "        the number of a revision N the patch will cleanly apply to\n"
+     "        (look for lines like \"--- foo/bar.txt        (revision N)\").\n"
+     "        To avoid rejects, first update to the revision N using \n"
+     "        'svn update -r N', apply the patch, and then update back to the\n"
+     "        HEAD revision. This way, conflicts can be resolved interactively.\n"
+     ),
+    {'q', opt_dry_run, opt_strip, opt_reverse_diff,
+     opt_ignore_whitespace} },
 
   { "propdel", svn_cl__propdel, {"pdel", "pd"}, N_
     ("Remove a property from files, dirs, or revisions.\n"
@@ -753,26 +1166,33 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "      A mimetype beginning with 'text/' (or an absent mimetype) is\n"
      "      treated as text.  Anything else is treated as binary.\n"
      "    svn:externals  - A newline separated list of module specifiers,\n"
-     "      each of which consists of a relative directory path, optional\n"
-     "      revision flags and an URL.  The ordering of the three elements\n"
-     "      implements different behavior.  Subversion 1.4 and earlier only\n"
-     "      support the following formats and the URLs cannot have peg\n"
-     "      revisions:\n"
-     "        foo             http://example.com/repos/zig\n"
-     "        foo/bar -r 1234 http://example.com/repos/zag\n"
-     "      Subversion 1.5 and greater support the above formats and the\n"
-     "      following formats where the URLs may have peg revisions:\n"
-     "                http://example.com/repos/zig foo\n"
-     "        -r 1234 http://example.com/repos/zig foo/bar\n"
-     "      Relative URLs are supported in Subversion 1.5 and greater for\n"
-     "      all above formats and are indicated by starting the URL with one\n"
-     "      of the following strings\n"
+     "      each of which consists of a URL and a relative directory path,\n"
+     "      similar to the syntax of the 'svn checkout' command:\n"
+     "        http://example.com/repos/zig foo/bar\n"
+     "      A revision to check out can optionally be specified to pin the\n"
+     "      external to a known revision:\n"
+     "        -r25 http://example.com/repos/zig foo/bar\n"
+     "      To unambiguously identify an element at a path which has been\n"
+     "      deleted (possibly even deleted multiple times in its history),\n"
+     "      an optional peg revision can be appended to the URL:\n"
+     "        -r25 http://example.com/repos/zig@42 foo/bar\n"
+     "      Relative URLs are indicated by starting the URL with one\n"
+     "      of the following strings:\n"
      "        ../  to the parent directory of the extracted external\n"
      "        ^/   to the repository root\n"
      "        //   to the scheme\n"
      "        /    to the server root\n"
      "      The ambiguous format 'relative_path relative_path' is taken as\n"
      "      'relative_url relative_path' with peg revision support.\n"
+     "      Lines in externals definitions starting with the '#' character\n"
+     "      are considered comments and are ignored.\n"
+     "      Subversion 1.4 and earlier only support the following formats\n"
+     "      where peg revisions can only be specified using a -r modifier\n"
+     "      and where URLs cannot be relative:\n"
+     "        foo             http://example.com/repos/zig\n"
+     "        foo/bar -r 1234 http://example.com/repos/zag\n"
+     "      Use of these formats is discouraged. They should only be used if\n"
+     "      interoperability with 1.4 clients is desired.\n"
      "    svn:needs-lock - If present, indicates that the file should be locked\n"
      "      before it is modified.  Makes the working copy file read-only\n"
      "      when it is not locked.  Use 'svn propdel svn:needs-lock PATH...'\n"
@@ -786,6 +1206,29 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      opt_force, opt_changelist },
     {{'F', N_("read property value from file ARG")}} },
 
+  { "relocate", svn_cl__relocate, {0}, N_
+    ("Relocate the working copy to point to a different repository root URL.\n"
+     "usage: 1. relocate FROM-PREFIX TO-PREFIX [PATH...]\n"
+     "       2. relocate TO-URL [PATH]\n"
+     "\n"
+     "  Rewrite working copy URL metadata to reflect a syntactic change only.\n"
+     "  This is used when a repository's root URL changes (such as a scheme\n"
+     "  or hostname change) but your working copy still reflects the same\n"
+     "  directory within the same repository.\n"
+     "\n"
+     "  1. FROM-PREFIX and TO-PREFIX are initial substrings of the working\n"
+     "     copy's current and new URLs, respectively.  (You may specify the\n"
+     "     complete old and new URLs if you wish.)  Use 'svn info' to determine\n"
+     "     the current working copy URL.\n"
+     "\n"
+     "  2. TO-URL is the (complete) new repository URL to use for PATH.\n"
+     "\n"
+     "  Examples:\n"
+     "    svn relocate http:// svn:// project1 project2\n"
+     "    svn relocate http://www.example.com/repo/project \\\n"
+     "                 svn://svn.example.com/repo/project\n"),
+    {opt_ignore_externals} },
+
   { "resolve", svn_cl__resolve, {0}, N_
     ("Resolve conflicts on working copy files or directories.\n"
      "usage: resolve --accept=ARG [PATH...]\n"
@@ -793,10 +1236,10 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "  Note:  the --accept option is currently required.\n"),
     {opt_targets, 'R', opt_depth, 'q', opt_accept},
     {{opt_accept, N_("specify automatic conflict resolution source\n"
-                             "                            "
-                             "('base', 'working', 'mine-conflict',\n"
-                             "                            "
-                             " 'theirs-conflict', 'mine-full', 'theirs-full')")}} },
+                     "                             "
+                     "('base', 'working', 'mine-conflict',\n"
+                     "                             "
+                     "'theirs-conflict', 'mine-full', 'theirs-full')")}} },
 
   { "resolved", svn_cl__resolved, {0}, N_
     ("Remove 'conflicted' state on working copy files or directories.\n"
@@ -813,7 +1256,7 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "usage: revert PATH...\n"
      "\n"
      "  Note:  this subcommand does not require network access, and resolves\n"
-     "  any conflicted states.  However, it does not restore removed directories.\n"),
+     "  any conflicted states.\n"),
     {opt_targets, 'R', opt_depth, 'q', opt_changelist} },
 
   { "status", svn_cl__status, {"stat", "st"}, N_
@@ -873,10 +1316,16 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "      ' ' the working copy is up to date\n"
      "\n"
      "  Remaining fields are variable width and delimited by spaces:\n"
-     "    The working revision (with -u or -v)\n"
+     "    The working revision (with -u or -v; '-' if the item is copied)\n"
      "    The last committed revision and last committed author (with -v)\n"
      "    The working copy path is always the final field, so it can\n"
      "      include spaces.\n"
+     "\n"
+     "  The presence of a question mark ('?') where a working revision, last\n"
+     "  committed revision, or last committed author was expected indicates\n"
+     "  that the information is unknown or irrelevant given the state of the\n"
+     "  item (for example, when the item is the result of a copy operation).\n"
+     "  The question mark serves as a visual placeholder to facilitate parsing.\n"
      "\n"
      "  Example output:\n"
      "    svn status wc\n"
@@ -886,13 +1335,13 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "    svn status -u wc\n"
      "     M           965    wc/bar.c\n"
      "           *     965    wc/foo.c\n"
-     "    A  +         965    wc/qax.c\n"
+     "    A  +           -    wc/qax.c\n"
      "    Status against revision:   981\n"
      "\n"
      "    svn status --show-updates --verbose wc\n"
      "     M           965       938 kfogel       wc/bar.c\n"
      "           *     965       922 sussman      wc/foo.c\n"
-     "    A  +         965       687 joe          wc/qax.c\n"
+     "    A  +           -       687 joe          wc/qax.c\n"
      "                 965       687 joe          wc/zig.c\n"
      "    Status against revision:   981\n"
      "\n"
@@ -902,12 +1351,13 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "          >   local missing, incoming edit upon update\n"
      "    D       wc/qax.c\n"),
     { 'u', 'v', 'N', opt_depth, 'q', opt_no_ignore, opt_incremental, opt_xml,
-      opt_ignore_externals, opt_changelist} },
+      opt_ignore_externals, opt_changelist},
+    {{'q', N_("don't print unversioned items")}} },
 
   { "switch", svn_cl__switch, {"sw"}, N_
-    ("Update the working copy to a different URL.\n"
+    ("Update the working copy to a different URL within the same repository.\n"
      "usage: 1. switch URL[@PEGREV] [PATH]\n"
-     "       2. switch --relocate FROM TO [PATH...]\n"
+     "       2. switch --relocate FROM-PREFIX TO-PREFIX [PATH...]\n"
      "\n"
      "  1. Update the working copy to mirror a new URL within the repository.\n"
      "     This behavior is similar to 'svn update', and is the way to\n"
@@ -929,15 +1379,23 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "     Use the --set-depth option to set a new working copy depth on the\n"
      "     targets of this operation.\n"
      "\n"
-     "  2. Rewrite working copy URL metadata to reflect a syntactic change only.\n"
-     "     This is used when repository's root URL changes (such as a scheme\n"
-     "     or hostname change) but your working copy still reflects the same\n"
-     "     directory within the same repository.\n"
+     "     By default, Subversion will refuse to switch a working copy path to\n"
+     "     a new URL with which it shares no common version control ancestry.\n"
+     "     Use the '--ignore-ancestry' option to override this sanity check.\n"
+     "\n"
+     "  2. The '--relocate' option is deprecated. This syntax is equivalent to\n"
+     "     'svn relocate FROM-PREFIX TO-PREFIX [PATH]'.\n"
      "\n"
      "  See also 'svn help update' for a list of possible characters\n"
-     "  reporting the action taken.\n"),
+     "  reporting the action taken.\n"
+     "\n"
+     "  Examples:\n"
+     "    svn switch ^/branches/1.x-release\n"
+     "    svn switch --relocate http:// svn://\n"
+     "    svn switch --relocate http://www.example.com/repo/project \\\n"
+     "                          svn://svn.example.com/repo/project\n"),
     { 'r', 'N', opt_depth, opt_set_depth, 'q', opt_merge_cmd, opt_relocate,
-      opt_ignore_externals, opt_force, opt_accept} },
+      opt_ignore_externals, opt_ignore_ancestry, opt_force, opt_accept} },
 
   { "unlock", svn_cl__unlock, {0}, N_
     ("Unlock working copy paths or URLs.\n"
@@ -953,8 +1411,8 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "  If no revision is given, bring working copy up-to-date with HEAD rev.\n"
      "  Else synchronize working copy to revision given by -r.\n"
      "\n"
-     "  For each updated item a line will start with a character reporting the\n"
-     "  action taken.  These characters have the following meaning:\n"
+     "  For each updated item a line will be printed with characters reporting\n"
+     "  the action taken. These characters have the following meaning:\n"
      "\n"
      "    A  Added\n"
      "    D  Deleted\n"
@@ -962,11 +1420,15 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "    C  Conflict\n"
      "    G  Merged\n"
      "    E  Existed\n"
+     "    R  Replaced\n"
      "\n"
-     "  A character in the first column signifies an update to the actual file,\n"
-     "  while updates to the file's properties are shown in the second column.\n"
+     "  Characters in the first column report about the item itself.\n"
+     "  Characters in the second column report about properties of the item.\n"
      "  A 'B' in the third column signifies that the lock for the file has\n"
      "  been broken or stolen.\n"
+     "  A 'C' in the fourth column indicates a tree conflict, while a 'C' in\n"
+     "  the first and second columns indicate textual conflicts in files\n"
+     "  and in property values, respectively.\n"
      "\n"
      "  If --force is used, unversioned obstructing paths in the working\n"
      "  copy do not automatically cause a failure if the update attempts to\n"
@@ -980,10 +1442,24 @@ const svn_opt_subcommand_desc2_t svn_cl__cmd_table[] =
      "  are applied to the obstructing path.  Obstructing paths are reported\n"
      "  in the first column with code 'E'.\n"
      "\n"
+     "  If the specified update target is missing from the working copy but its\n"
+     "  immediate parent directory is present, checkout the target into its\n"
+     "  parent directory at the specified depth.  If --parents is specified,\n"
+     "  create any missing parent directories of the target by checking them\n"
+     "  out, too, at depth=empty.\n"
+     "\n"
      "  Use the --set-depth option to set a new working copy depth on the\n"
      "  targets of this operation.\n"),
     {'r', 'N', opt_depth, opt_set_depth, 'q', opt_merge_cmd, opt_force,
-     opt_ignore_externals, opt_changelist, opt_editor_cmd, opt_accept} },
+     opt_ignore_externals, opt_changelist, opt_editor_cmd, opt_accept,
+     opt_parents} },
+
+  { "upgrade", svn_cl__upgrade, {0}, N_
+    ("Upgrade the metadata storage format for a working copy.\n"
+     "usage: upgrade [WCPATH...]\n"
+     "\n"
+     "  Local modifications are preserved.\n"),
+    { 'q' } },
 
   { NULL, NULL, {0}, NULL, {0} }
 };
@@ -1030,50 +1506,6 @@ svn_cl__check_cancel(void *baton)
     return SVN_NO_ERROR;
 }
 
-typedef struct config_option_t
-{
-  const char *file;
-  const char *section;
-  const char *option;
-  const char *value;
-} config_option_t;
-
-/* Parse argument of '--config-option'. */
-static svn_error_t *
-parse_config_option(apr_array_header_t **config_options,
-                    const char *opt_arg,
-                    apr_pool_t *pool)
-{
-  config_option_t *config_option;
-  const char *first_colon, *second_colon, *equals_sign;
-  apr_size_t len = strlen(opt_arg);
-  if ((first_colon = strchr(opt_arg, ':')) && (first_colon != opt_arg))
-    {
-      if ((second_colon = strchr(first_colon + 1, ':')) && (second_colon != first_colon + 1))
-        {
-          if ((equals_sign = strchr(second_colon + 1, '=')) && (equals_sign != second_colon + 1))
-            {
-              config_option = apr_pcalloc(pool, sizeof(config_option_t));
-              config_option->file = apr_pstrndup(pool, opt_arg, first_colon - opt_arg);
-              config_option->section = apr_pstrndup(pool, first_colon + 1, second_colon - first_colon - 1);
-              config_option->option = apr_pstrndup(pool, second_colon + 1, equals_sign - second_colon - 1);
-              if (! (strchr(config_option->option, ':')))
-                {
-                  config_option->value = apr_pstrndup(pool, equals_sign + 1, opt_arg + len - equals_sign - 1);
-                  if (! *config_options)
-                    {
-                      *config_options = apr_array_make(pool, 1, sizeof(config_option_t *));
-                    }
-                  APR_ARRAY_PUSH(*config_options, config_option_t *) = config_option;
-                  return SVN_NO_ERROR;
-                }
-            }
-        }
-    }
-  return svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
-                          _("Invalid syntax of argument of --config-option"));
-}
-
 
 /*** Main. ***/
 
@@ -1091,11 +1523,9 @@ main(int argc, const char *argv[])
   int i;
   const svn_opt_subcommand_desc2_t *subcommand = NULL;
   const char *dash_m_arg = NULL, *dash_F_arg = NULL;
-  const char *path_utf8;
-  apr_status_t apr_err;
   svn_cl__cmd_baton_t command_baton;
   svn_auth_baton_t *ab;
-  svn_config_t *cfg_config, *cfg_servers;
+  svn_config_t *cfg_config;
   svn_boolean_t descend = TRUE;
   svn_boolean_t interactive_conflicts = FALSE;
   apr_hash_t *changelists;
@@ -1170,7 +1600,8 @@ main(int argc, const char *argv[])
       const char *utf8_opt_arg;
 
       /* Parse the next option. */
-      apr_err = apr_getopt_long(os, svn_cl__options, &opt_id, &opt_arg);
+      apr_status_t apr_err = apr_getopt_long(os, svn_cl__options, &opt_id,
+                                             &opt_arg);
       if (APR_STATUS_IS_EOF(apr_err))
         break;
       else if (apr_err)
@@ -1186,11 +1617,10 @@ main(int argc, const char *argv[])
       switch (opt_id) {
       case 'l':
         {
-          char *end;
-          opt_state.limit = strtol(opt_arg, &end, 10);
-          if (end == opt_arg || *end != '\0')
+          err = svn_cstring_atoi(&opt_state.limit, opt_arg);
+          if (err)
             {
-              err = svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
+              err = svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, err,
                                      _("Non-numeric limit argument given"));
               return svn_cmdline_handle_exit_error(err, pool, "svn: ");
             }
@@ -1211,9 +1641,6 @@ main(int argc, const char *argv[])
         break;
       case 'c':
         {
-          char *end;
-          svn_revnum_t changeno;
-          svn_opt_revision_range_t *range;
           apr_array_header_t *change_revs =
             svn_cstring_split(opt_arg, ", \n\r\t\v", TRUE, pool);
 
@@ -1227,16 +1654,42 @@ main(int argc, const char *argv[])
 
           for (i = 0; i < change_revs->nelts; i++)
             {
+              char *end;
+              svn_revnum_t changeno, changeno_end;
+              svn_opt_revision_range_t *range;
               const char *change_str =
                 APR_ARRAY_IDX(change_revs, i, const char *);
+              const char *s = change_str;
+              svn_boolean_t is_negative;
 
-              /* Allow any number of 'r's to prefix a revision number.
-                 ### TODO: Any reason we're not just using opt.c's
-                 ### revision-parsing code here?  Then -c could take
-                 ### "{DATE}" and the special words. */
-              while (*change_str == 'r')
-                change_str++;
-              changeno = strtol(change_str, &end, 10);
+              /* Check for a leading minus to allow "-c -r42".
+               * The is_negative flag is used to handle "-c -42" and "-c -r42".
+               * The "-c r-42" case is handled by strtol() returning a
+               * negative number. */
+              is_negative = (*s == '-');
+              if (is_negative)
+                s++;
+
+              /* Allow any number of 'r's to prefix a revision number. */
+              while (*s == 'r')
+                s++;
+              changeno = changeno_end = strtol(s, &end, 10);
+              if (end != s && *end == '-')
+                {
+                  if (changeno < 0 || is_negative)
+                    {
+                      err = svn_error_createf(SVN_ERR_CL_ARG_PARSING_ERROR,
+                                              NULL,
+                                              _("Negative number in range (%s)"
+                                                " not supported with -c"),
+                                              change_str);
+                      return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+                    }
+                  s = end + 1;
+                  while (*s == 'r')
+                    s++;
+                  changeno_end = strtol(s, &end, 10);
+                }
               if (end == change_str || *end != '\0')
                 {
                   err = svn_error_createf(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
@@ -1252,21 +1705,33 @@ main(int argc, const char *argv[])
                   return svn_cmdline_handle_exit_error(err, pool, "svn: ");
                 }
 
+              if (is_negative)
+                changeno = -changeno;
+
               /* Figure out the range:
                     -c N  -> -r N-1:N
-                    -c -N -> -r N:N-1 */
-              range = apr_palloc(pool, sizeof(*range));
+                    -c -N -> -r N:N-1
+                    -c M-N -> -r M-1:N for M < N
+                    -c M-N -> -r M:N-1 for M > N
+                    -c -M-N -> error (too confusing/no valid use case)
+              */
               if (changeno > 0)
                 {
-                  range->start.value.number = changeno - 1;
-                  range->end.value.number = changeno;
+                  if (changeno <= changeno_end)
+                    changeno--;
+                  else
+                    changeno_end--;
                 }
               else
                 {
                   changeno = -changeno;
-                  range->start.value.number = changeno;
-                  range->end.value.number = changeno - 1;
+                  changeno_end = changeno - 1;
                 }
+
+              range = apr_palloc(pool, sizeof(*range));
+              range->start.value.number = changeno;
+              range->end.value.number = changeno_end;
+
               opt_state.used_change_arg = TRUE;
               range->start.kind = svn_opt_revision_number;
               range->end.kind = svn_opt_revision_number;
@@ -1347,7 +1812,7 @@ main(int argc, const char *argv[])
         opt_state.revprop = TRUE;
         break;
       case 'R':
-        opt_state.depth = SVN_DEPTH_INFINITY_OR_FILES(TRUE);
+        opt_state.depth = svn_depth_infinity;
         break;
       case 'N':
         descend = FALSE;
@@ -1385,8 +1850,8 @@ main(int argc, const char *argv[])
             return svn_cmdline_handle_exit_error
               (svn_error_createf(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
                                  _("'%s' is not a valid depth; try "
-                                   "'exclude', 'empty', 'files', 'immediates', "
-                                   "or 'infinity'"),
+                                   "'exclude', 'empty', 'files', "
+                                   "'immediates', or 'infinity'"),
                                  utf8_opt_arg), pool, "svn: ");
           }
         break;
@@ -1432,6 +1897,9 @@ main(int argc, const char *argv[])
       case opt_no_diff_deleted:
         opt_state.no_diff_deleted = TRUE;
         break;
+      case opt_show_copies_as_adds:
+        opt_state.show_copies_as_adds = TRUE;
+        break;
       case opt_notice_ancestry:
         opt_state.notice_ancestry = TRUE;
         break;
@@ -1475,17 +1943,26 @@ main(int argc, const char *argv[])
         opt_state.new_target = apr_pstrdup(pool, opt_arg);
         break;
       case opt_config_dir:
-        err = svn_utf_cstring_to_utf8(&path_utf8, opt_arg, pool);
-        opt_state.config_dir = svn_path_canonicalize(path_utf8, pool);
+        {
+          const char *path_utf8;
+          err = svn_utf_cstring_to_utf8(&path_utf8, opt_arg, pool);
+          if (err)
+            return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+          opt_state.config_dir = svn_dirent_internal_style(path_utf8, pool);
+        }
         break;
       case opt_config_options:
-        {
-          err = parse_config_option(&opt_state.config_options, opt_arg, pool);
-          if (err)
-            {
-              return svn_cmdline_handle_exit_error(err, pool, "svn: ");
-            }
-        }
+        if (!opt_state.config_options)
+          opt_state.config_options =
+                   apr_array_make(pool, 1,
+                                  sizeof(svn_cmdline__config_argument_t*));
+
+        err = svn_utf_cstring_to_utf8(&opt_arg, opt_arg, pool);
+        if (!err)
+          err = svn_cmdline__parse_config_option(opt_state.config_options,
+                                                 opt_arg, pool);
+        if (err)
+          return svn_cmdline_handle_exit_error(err, pool, "svn: ");
         break;
       case opt_autoprops:
         opt_state.autoprops = TRUE;
@@ -1573,6 +2050,44 @@ main(int argc, const char *argv[])
         break;
       case opt_reintegrate:
         opt_state.reintegrate = TRUE;
+        break;
+      case opt_strip:
+        {
+          err = svn_cstring_atoi(&opt_state.strip, opt_arg);
+          if (err)
+            {
+              err = svn_error_createf(SVN_ERR_CL_ARG_PARSING_ERROR, err,
+                                      _("Invalid strip count '%s'"), opt_arg);
+              return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+            }
+          if (opt_state.strip < 0)
+            {
+              err = svn_error_create(SVN_ERR_INCORRECT_PARAMS, NULL,
+                                     _("Argument to --strip must be positive"));
+              return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+            }
+        }
+        break;
+      case opt_ignore_keywords:
+        opt_state.ignore_keywords = TRUE;
+        break;
+      case opt_reverse_diff:
+        opt_state.reverse_diff = TRUE;
+        break;
+      case opt_ignore_whitespace:
+          opt_state.ignore_whitespace = TRUE;
+          break;
+      case opt_diff:
+          opt_state.show_diff = TRUE;
+          break;
+      case opt_internal_diff:
+        opt_state.internal_diff = TRUE;
+        break;
+      case opt_use_git_diff_format:
+        opt_state.use_git_diff_format = TRUE;
+        break;
+      case opt_allow_mixed_revisions:
+        opt_state.allow_mixed_rev = TRUE;
         break;
       default:
         /* Hmmm. Perhaps this would be a good place to squirrel away
@@ -1690,7 +2205,7 @@ main(int argc, const char *argv[])
         }
     }
 
-  /* Only merge supports multiple revisions/revision ranges. */
+  /* Only merge and log support multiple revisions/revision ranges. */
   if (subcommand->cmd_func != svn_cl__merge
       && subcommand->cmd_func != svn_cl__log)
     {
@@ -1702,17 +2217,6 @@ main(int argc, const char *argv[])
                                    "or both -c and -r"));
           return svn_cmdline_handle_exit_error(err, pool, "svn: ");
         }
-    }
-
-  /* Merge doesn't support specifying a revision range
-     when using --reintegrate. */
-  if (subcommand->cmd_func == svn_cl__merge
-      && opt_state.revision_ranges->nelts
-      && opt_state.reintegrate)
-    {
-      err = svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
-                             _("-r and -c can't be used with --reintegrate"));
-      return svn_cmdline_handle_exit_error(err, pool, "svn: ");
     }
 
   /* Disallow simultaneous use of both --depth and --set-depth. */
@@ -1745,6 +2249,19 @@ main(int argc, const char *argv[])
       return svn_cmdline_handle_exit_error(err, pool, "svn: ");
     }
 
+  /* Disallow simultaneous use of both -m and -F, when they are
+     both used to pass a commit message or lock comment.  ('propset'
+     takes the property value, not a commit message, from -F.) 
+   */
+  if (opt_state.filedata && opt_state.message
+      && subcommand->cmd_func != svn_cl__propset)
+    {
+      err = svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
+                             _("--message (-m) and --file (-F) "
+                               "are mutually exclusive"));
+      return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+    }
+
   /* --trust-server-cert can only be used with --non-interactive */
   if (opt_state.trust_server_cert && !opt_state.non_interactive)
     {
@@ -1754,7 +2271,17 @@ main(int argc, const char *argv[])
       return svn_cmdline_handle_exit_error(err, pool, "svn: ");
     }
 
-  /* Ensure that 'revision_ranges' has at least one item, and that
+  /* Disallow simultaneous use of both --diff-cmd and
+     --internal-diff.  */
+  if (opt_state.diff_cmd && opt_state.internal_diff)
+    {
+      err = svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
+                             _("--diff-cmd and --internal-diff "
+                               "are mutually exclusive"));
+      return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+    }
+
+  /* Ensure that 'revision_ranges' has at least one item, and make
      'start_revision' and 'end_revision' match that item. */
   if (opt_state.revision_ranges->nelts == 0)
     {
@@ -1768,6 +2295,12 @@ main(int argc, const char *argv[])
                                            svn_opt_revision_range_t *)->start;
   opt_state.end_revision = APR_ARRAY_IDX(opt_state.revision_ranges, 0,
                                          svn_opt_revision_range_t *)->end;
+
+  /* Create a client context object. */
+  command_baton.opt_state = &opt_state;
+  if ((err = svn_client_create_context(&ctx, pool)))
+    return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+  command_baton.ctx = ctx;
 
   /* If we're running a command that could result in a commit, verify
      that any log message we were given on the command line makes
@@ -1786,30 +2319,35 @@ main(int argc, const char *argv[])
          that's probably not what the user intended. */
       if (dash_F_arg)
         {
-          svn_wc_adm_access_t *adm_access;
-          const svn_wc_entry_t *e;
-          const char *fname_utf8 = svn_path_internal_style(dash_F_arg, pool);
-          err = svn_wc_adm_probe_open3(&adm_access, NULL, fname_utf8,
-                                       FALSE, 0, NULL, NULL, pool);
-          if (! err)
-            err = svn_wc_entry(&e, fname_utf8, adm_access, FALSE, pool);
-          if ((err == SVN_NO_ERROR) && e)
+          svn_node_kind_t kind;
+          const char *local_abspath;
+          const char *fname_utf8 = svn_dirent_internal_style(dash_F_arg, pool);
+
+          err = svn_dirent_get_absolute(&local_abspath, fname_utf8, pool);
+
+          if (!err)
             {
-              if (subcommand->cmd_func != svn_cl__lock)
+              err = svn_wc_read_kind(&kind, ctx->wc_ctx, local_abspath, FALSE,
+                                     pool);
+
+              if (!err && kind != svn_node_none && kind != svn_node_unknown)
                 {
-                  err = svn_error_create
-                    (SVN_ERR_CL_LOG_MESSAGE_IS_VERSIONED_FILE, NULL,
-                     _("Log message file is a versioned file; "
-                       "use '--force-log' to override"));
+                  if (subcommand->cmd_func != svn_cl__lock)
+                    {
+                      err = svn_error_create(
+                         SVN_ERR_CL_LOG_MESSAGE_IS_VERSIONED_FILE, NULL,
+                         _("Log message file is a versioned file; "
+                           "use '--force-log' to override"));
+                    }
+                  else
+                    {
+                      err = svn_error_create(
+                         SVN_ERR_CL_LOG_MESSAGE_IS_VERSIONED_FILE, NULL,
+                         _("Lock comment file is a versioned file; "
+                           "use '--force-log' to override"));
+                    }
+                  return svn_cmdline_handle_exit_error(err, pool, "svn: ");
                 }
-              else
-                {
-                  err = svn_error_create
-                    (SVN_ERR_CL_LOG_MESSAGE_IS_VERSIONED_FILE, NULL,
-                     _("Lock comment file is a versioned file; "
-                       "use '--force-log' to override"));
-                }
-              return svn_cmdline_handle_exit_error(err, pool, "svn: ");
             }
           svn_error_clear(err);
         }
@@ -1841,12 +2379,24 @@ main(int argc, const char *argv[])
         }
     }
 
-  if (opt_state.relocate && (opt_state.depth != svn_depth_unknown))
+  /* Relocation is infinite-depth only. */
+  if (opt_state.relocate)
     {
-      err = svn_error_create(SVN_ERR_CL_MUTUALLY_EXCLUSIVE_ARGS, NULL,
-                             _("--relocate and --depth are mutually "
-                               "exclusive"));
-      return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+      if (opt_state.depth != svn_depth_unknown)
+        {
+          err = svn_error_create(SVN_ERR_CL_MUTUALLY_EXCLUSIVE_ARGS, NULL,
+                                 _("--relocate and --depth are mutually "
+                                   "exclusive"));
+          return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+        }
+      if (! descend)
+        {
+          err = svn_error_create(
+                    SVN_ERR_CL_MUTUALLY_EXCLUSIVE_ARGS, NULL,
+                    _("--relocate and --non-recursive (-N) are mutually "
+                      "exclusive"));
+          return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+        }
     }
 
   /* Only a few commands can accept a revision range; the rest can take at
@@ -1868,7 +2418,7 @@ main(int argc, const char *argv[])
     {
       if (subcommand->cmd_func == svn_cl__status)
         {
-          opt_state.depth = SVN_DEPTH_INFINITY_OR_IMMEDIATES(FALSE);
+          opt_state.depth = svn_depth_immediates;
         }
       else if (subcommand->cmd_func == svn_cl__revert
                || subcommand->cmd_func == svn_cl__add
@@ -1882,21 +2432,18 @@ main(int argc, const char *argv[])
         }
       else
         {
-          opt_state.depth = SVN_DEPTH_INFINITY_OR_FILES(FALSE);
+          opt_state.depth = svn_depth_files;
         }
     }
-  /* Create a client context object. */
-  command_baton.opt_state = &opt_state;
-  if ((err = svn_client_create_context(&ctx, pool)))
-    return svn_cmdline_handle_exit_error(err, pool, "svn: ");
-  command_baton.ctx = ctx;
 
   err = svn_config_get_config(&(ctx->config),
                               opt_state.config_dir, pool);
   if (err)
     {
-      /* Fallback to default config if the config directory isn't readable. */
-      if (err->apr_err == APR_EACCES)
+      /* Fallback to default config if the config directory isn't readable
+         or is not a directory. */
+      if (APR_STATUS_IS_EACCES(err->apr_err)
+          || SVN__APR_STATUS_IS_ENOTDIR(err->apr_err))
         {
           svn_handle_warning2(stderr, err, "svn: ");
           svn_error_clear(err);
@@ -1907,34 +2454,14 @@ main(int argc, const char *argv[])
 
   cfg_config = apr_hash_get(ctx->config, SVN_CONFIG_CATEGORY_CONFIG,
                             APR_HASH_KEY_STRING);
-  cfg_servers = apr_hash_get(ctx->config, SVN_CONFIG_CATEGORY_SERVERS,
-                             APR_HASH_KEY_STRING);
 
   /* Update the options in the config */
   if (opt_state.config_options)
     {
-      for (i = 0; i < opt_state.config_options->nelts; i++)
-        {
-          config_option_t *config_option = APR_ARRAY_IDX(opt_state.config_options,
-                                                         i, config_option_t *);
-          if (strcmp(config_option->file, "config") == 0)
-            {
-              svn_config_set(cfg_config, config_option->section,
-                             config_option->option, config_option->value);
-            }
-          else if (strcmp(config_option->file, "servers") == 0)
-            {
-              svn_config_set(cfg_servers, config_option->section,
-                             config_option->option, config_option->value);
-            }
-          else
-            {
-              err = svn_error_create(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
-                                     _("Unrecognized file in argument of --config-option"));
-              svn_handle_warning2(stderr, err, "svn: ");
-              svn_error_clear(err);
-            }
-        }
+      svn_error_clear(
+          svn_cmdline__apply_config_options(ctx->config,
+                                            opt_state.config_options,
+                                            "svn: ", "--config-option"));
     }
 
   /* XXX: Only diff_cmd for now, overlay rest later and stop passing
@@ -1945,6 +2472,9 @@ main(int argc, const char *argv[])
   if (opt_state.merge_cmd)
     svn_config_set(cfg_config, SVN_CONFIG_SECTION_HELPERS,
                    SVN_CONFIG_OPTION_DIFF3_CMD, opt_state.merge_cmd);
+  if (opt_state.internal_diff)
+    svn_config_set(cfg_config, SVN_CONFIG_SECTION_HELPERS,
+                   SVN_CONFIG_OPTION_DIFF_CMD, NULL);
 
   /* Check for mutually exclusive args --auto-props and --no-auto-props */
   if (opt_state.autoprops && opt_state.no_autoprops)
@@ -2022,6 +2552,16 @@ main(int argc, const char *argv[])
   /* Set the log message callback function.  Note that individual
      subcommands will populate the ctx->log_msg_baton3. */
   ctx->log_msg_func3 = svn_cl__get_log_message;
+
+  /* Set up the notifier. */
+  if (((subcommand->cmd_func != svn_cl__status) && !opt_state.quiet)
+        || ((subcommand->cmd_func == svn_cl__status) && !opt_state.xml))
+    {
+      err = svn_cl__get_notifier(&ctx->notify_func2, &ctx->notify_baton2,
+                                 FALSE, pool);
+      if (err)
+        return svn_cmdline_handle_exit_error(err, pool, "svn: ");
+    }
 
   /* Set up our cancellation support. */
   ctx->cancel_func = svn_cl__check_cancel;
@@ -2119,8 +2659,6 @@ main(int argc, const char *argv[])
   err = (*subcommand->cmd_func)(os, &command_baton, pool);
   if (err)
     {
-      svn_error_t *tmp_err;
-
       /* For argument-related problems, suggest using the 'help'
          subcommand. */
       if (err->apr_err == SVN_ERR_CL_INSUFFICIENT_ARGS
@@ -2129,19 +2667,29 @@ main(int argc, const char *argv[])
           err = svn_error_quick_wrap(err,
                                      _("Try 'svn help' for more info"));
         }
-      svn_handle_error2(err, stderr, FALSE, "svn: ");
+      if (err->apr_err == SVN_ERR_WC_UPGRADE_REQUIRED)
+        {
+          err = svn_error_quick_wrap(err,
+                                     _("Please see the 'svn upgrade' command"));
+        }
+
+      /* Issue #3014:
+       * Don't print anything on broken pipes. The pipe was likely
+       * closed by the process at the other end. We expect that
+       * process to perform error reporting as necessary.
+       *
+       * ### This assumes that there is only one error in a chain for
+       * ### SVN_ERR_IO_PIPE_WRITE_ERROR. See svn_cmdline_fputs(). */
+      if (err->apr_err != SVN_ERR_IO_PIPE_WRITE_ERROR)
+        svn_handle_error2(err, stderr, FALSE, "svn: ");
 
       /* Tell the user about 'svn cleanup' if any error on the stack
          was about locked working copies. */
-      for (tmp_err = err; tmp_err; tmp_err = tmp_err->child)
-        if (tmp_err->apr_err == SVN_ERR_WC_LOCKED)
-          {
-            svn_error_clear
-              (svn_cmdline_fputs(_("svn: run 'svn cleanup' to remove locks "
-                                   "(type 'svn help cleanup' for details)\n"),
-                                 stderr, pool));
-            break;
-          }
+      if (svn_error_find_cause(err, SVN_ERR_WC_LOCKED))
+        svn_error_clear(svn_cmdline_fputs(_("svn: run 'svn cleanup' to "
+                                            "remove locks (type 'svn help "
+                                            "cleanup' for details)\n"),
+                                          stderr, pool));
 
       svn_error_clear(err);
       svn_pool_destroy(pool);

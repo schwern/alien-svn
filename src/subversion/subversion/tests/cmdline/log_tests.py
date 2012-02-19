@@ -3,17 +3,25 @@
 #  log_tests.py:  testing "svn log"
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -26,6 +34,15 @@ from svntest import wc
 from svntest.main import server_has_mergeinfo
 from svntest.main import SVN_PROP_MERGEINFO
 from merge_tests import set_up_branch
+
+# (abbreviation)
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
+exp_noop_up_out = svntest.actions.expected_noop_update_output
 
 ######################################################################
 #
@@ -57,9 +74,6 @@ msg_separator = '------------------------------------' \
 
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-SkipUnless = svntest.testcase.SkipUnless
-XFail = svntest.testcase.XFail
 Item = svntest.wc.StateItem
 
 
@@ -289,7 +303,8 @@ def merge_history_repos(sbox):
   # Mergeinfo changes on /trunk:
   #    Merged /branches/a:r7
   os.chdir('trunk')
-  svntest.main.run_svn(None, 'merge', '--record-only', '-r6:7',
+  svntest.main.run_svn(None, 'merge', '--allow-mixed-revisions',
+                       '--record-only', '-r6:7',
                        os.path.join('..', branch_a))
   svntest.main.run_svn(None, 'ci', '-m',
                        "Block r7 from merging to trunk.",
@@ -383,7 +398,8 @@ def merge_history_repos(sbox):
   #    Merged /trunk:r2
   #    Merged /branches/c:r3-16
   os.chdir('trunk')
-  svntest.main.run_svn(None, 'merge', os.path.join('..', branch_c) + '@HEAD')
+  svntest.main.run_svn(None, 'merge', '--allow-mixed-revisions',
+                       os.path.join('..', branch_c) + '@HEAD')
   svntest.main.file_write(os.path.join('A', 'mu'),
                           "This is the file 'mu'.\n" +
                           "Don't forget to look at 'upsilon', as well.\n" +
@@ -405,8 +421,7 @@ def merge_history_repos(sbox):
 
 # For errors seen while parsing log data.
 class SVNLogParseError(Exception):
-  def __init__(self, args=None):
-    self.args = args
+  pass
 
 
 def parse_log_output(log_lines):
@@ -431,8 +446,11 @@ def parse_log_output(log_lines):
 
   If LOG_LINES contains merge result information, then the hash also contains
 
-     'merges'   ===> list of merging revisions that resulted in this log
-  being part of the list of messages.
+     'merges'   ===> list of forward-merging revisions that resulted in this
+  log being part of the list of messages.
+
+     'reverse_merges'   ===> list of reverse-merging revisions that resulted
+  in this log being part of the list of messages.
      """
 
   # Here's some log output to look at while writing this function:
@@ -471,8 +489,11 @@ def parse_log_output(log_lines):
   # The log chain to return.
   chain = []
 
+  # Filter debug lines from the output.
+  log_lines = [line for line in log_lines if not line.startswith('DBG:')]
+
   this_item = None
-  while 1:
+  while True:
     try:
       this_line = log_lines.pop(0)
     except IndexError:
@@ -481,6 +502,7 @@ def parse_log_output(log_lines):
     match = header_re.search(this_line)
     if match and match.groups():
       is_result = 0
+      is_result_reverse = 0
       this_item = {}
       this_item['revision'] = int(match.group(1))
       this_item['author']   = match.group(2)
@@ -494,8 +516,10 @@ def parse_log_output(log_lines):
         paths = []
         path_line = log_lines.pop(0).strip()
 
-        # Stop on either a blank line or a "Merged via: ..." line
-        while path_line != '' and path_line[0:6] != 'Merged':
+        # Stop on either a blank line or a "(Reverse) Merged via: ..." line
+        while (path_line != ''
+               and path_line[0:6] != 'Merged'
+               and path_line[0:14] != 'Reverse merged'):
           paths.append( (path_line[0], path_line[2:]) )
           path_line = log_lines.pop(0).strip()
 
@@ -504,9 +528,15 @@ def parse_log_output(log_lines):
         if path_line[0:6] == 'Merged':
           is_result = 1
           result_line = path_line
+        elif path_line[0:14] == 'Reverse merged':
+          is_result_reverse = 1
+          result_line = path_line
 
       elif next_line[0:6] == 'Merged':
         is_result = 1
+        result_line = next_line.strip()
+      elif next_line[0:14] == 'Reverse merged':
+        is_result_reverse = 1
         result_line = next_line.strip()
 
       # Parse output of "Merged via: ..." line
@@ -516,6 +546,17 @@ def parse_log_output(log_lines):
         for rev_str in result_line[prefix_len:].split(','):
           merges.append(int(rev_str.strip()[1:]))
         this_item['merges'] = merges
+
+        # Eat blank line
+        log_lines.pop(0)
+
+      # Parse output of "Reverse merged via: ..." line
+      if is_result_reverse:
+        reverse_merges = []
+        prefix_len = len('Reverse merged via: ')
+        for rev_str in result_line[prefix_len:].split(','):
+          reverse_merges.append(int(rev_str.strip()[1:]))
+        this_item['reverse_merges'] = reverse_merges
 
         # Eat blank line
         log_lines.pop(0)
@@ -1099,35 +1140,62 @@ Log message for revision 3.
     log_chain = parse_log_output([line+"\n" for line in log.split("\n")])
 
 
-def check_merge_results(log_chain, expected_merges):
+def check_merge_results(log_chain, expected_merges=None,
+                        expected_reverse_merges=None):
   '''Check LOG_CHAIN to see if the log information contains 'Merged via'
-  information indicated by EXPECTED_MERGES.  EXPECTED_MERGES is a dictionary
-  whose key is the merged revision, and whose value is the merging revision.'''
+  and/or 'Reverse Merged via' information indicated by EXPECTED_MERGES and
+  EXPECTED_REVERSE_MERGES respectively. EXPECTED_MERGES and
+  EXPECTED_REVERSE_MERGES are dictionaries whose keys are the merged
+  revisions, and whose values are the merging revisions.'''
 
   # Check to see if the number and values of the revisions is correct
   for log in log_chain:
-    if log['revision'] not in expected_merges:
+    if not ((expected_merges and log['revision'] in expected_merges)
+            or (expected_reverse_merges
+                and log['revision'] in expected_reverse_merges)):
       raise SVNUnexpectedLogs("Found unexpected revision %d" %
                               log['revision'], log_chain)
 
   # Check to see that each rev in expected_merges contains the correct data
-  for rev in expected_merges:
-    try:
-      log = [x for x in log_chain if x['revision'] == rev][0]
-      if 'merges' in log.keys():
-        actual = log['merges']
-      else:
-        actual = []
-      expected = expected_merges[rev]
+  if expected_merges:
+    for rev in expected_merges:
+      try:
+        log = [x for x in log_chain if x['revision'] == rev][0]
+        if 'merges' in log.keys():
+          actual = log['merges']
+        else:
+          actual = []
+        expected = expected_merges[rev]
 
-      if actual != expected:
-        raise SVNUnexpectedLogs(("Merging revisions in rev %d not correct; " +
-                                 "expecting %s, found %s") %
+        if actual != expected:
+          raise SVNUnexpectedLogs(("Merging revisions in rev %d not " +
+                                   "correct; expecting %s, found %s") %
+                                  (rev, str(expected), str(actual)), log_chain)
+      except IndexError:
+        raise SVNUnexpectedLogs("Merged revision '%d' missing" % rev,
+                                log_chain)
+
+  # Check to see that each rev in expected_merges contains the correct data
+  if expected_reverse_merges:
+    for rev in expected_reverse_merges:
+      try:
+        log = [x for x in log_chain if x['revision'] == rev][0]
+        if 'reverse_merges' in log.keys():
+          actual = log['reverse_merges']
+        else:
+          actual = []
+        expected = expected_reverse_merges[rev]
+
+        if actual != expected:
+          raise SVNUnexpectedLogs(("Reverse merging revisions in rev %d not " +
+                                 "correct; expecting %s, found %s") %
                                 (rev, str(expected), str(actual)), log_chain)
-    except IndexError:
-      raise SVNUnexpectedLogs("Merged revision '%d' missing" % rev, log_chain)
+      except IndexError:
+        raise SVNUnexpectedLogs("Reverse merged revision '%d' missing" % rev,
+                                log_chain)
 
 
+@SkipUnless(server_has_mergeinfo)
 def merge_sensitive_log_single_revision(sbox):
   "test 'svn log -g' on a single revision"
 
@@ -1188,6 +1256,7 @@ def merge_sensitive_log_single_revision(sbox):
   check_merge_results(log_chain, expected_merges)
 
 
+@SkipUnless(server_has_mergeinfo)
 def merge_sensitive_log_branching_revision(sbox):
   "test 'svn log -g' on a branching revision"
 
@@ -1211,6 +1280,7 @@ def merge_sensitive_log_branching_revision(sbox):
   check_merge_results(log_chain, expected_merges)
 
 
+@SkipUnless(server_has_mergeinfo)
 def merge_sensitive_log_non_branching_revision(sbox):
   "test 'svn log -g' on a non-branching revision"
 
@@ -1234,6 +1304,7 @@ def merge_sensitive_log_non_branching_revision(sbox):
   check_merge_results(log_chain, expected_merges)
 
 
+@SkipUnless(server_has_mergeinfo)
 def merge_sensitive_log_added_path(sbox):
   "test 'svn log -g' a path added before merge"
 
@@ -1286,7 +1357,7 @@ def log_changes_range(sbox):
 
   exit_code, output, err = svntest.actions.run_and_verify_svn(None, None, [],
                                                               'log', '-c',
-                                                              '2:5', repo_url)
+                                                              '2-5', repo_url)
 
   log_chain = parse_log_output(output)
   check_log_chain(log_chain, [2, 3, 4, 5])
@@ -1304,6 +1375,19 @@ def log_changes_list(sbox):
 
   log_chain = parse_log_output(output)
   check_log_chain(log_chain, [2, 5, 7])
+
+def log_changes_complex(sbox):
+  "test log -c on complex set of ranges"
+
+  guarantee_repos_and_wc(sbox)
+  repo_url = sbox.repo_url
+
+  exit_code, output, err = svntest.actions.run_and_verify_svn(None, None, [],
+                                                              'log', '-c',
+                                                              '2,5-3,-8,6-7', repo_url)
+
+  log_chain = parse_log_output(output)
+  check_log_chain(log_chain, [2, 5, 4, 3, 8, 6, 7])
 
 #----------------------------------------------------------------------
 def only_one_wc_path(sbox):
@@ -1407,8 +1491,9 @@ def retrieve_revprops(sbox):
     args=['-r1', '--with-revprop', custom_name])
 
 
+@Issue(2866)
 def log_xml_with_bad_data(sbox):
-  "log --xml escapes non-utf8 data (issue #2866)"
+  "log --xml escapes non-utf8 data"
   svntest.actions.load_repo(sbox, os.path.join(os.path.dirname(sys.argv[0]),
                                                'log_tests_data',
                                                'xml-invalid-chars.dump'))
@@ -1420,25 +1505,42 @@ def log_xml_with_bad_data(sbox):
   svntest.actions.run_and_verify_log_xml(
     expected_revprops=(r0_props,), args=[sbox.repo_url])
 
+@SkipUnless(server_has_mergeinfo)
+@Issue(3172)
 def merge_sensitive_log_target_with_bogus_mergeinfo(sbox):
   "'svn log -g target_with_bogus_mergeinfo'"
-  #Refer issue 3172 for details.
-  #Create greek tree
-  #svn ps 'svn:mergeinfo' '/A/B:0' A/D
-  #svn ci -m 'setting bogus mergeinfo'
-  #svn log -g -r2
+  # A test for issue #3172 'svn log -g' seems to encounter error on server':
+  # 'log -g' fails the moment it encounters a bogus mergeinfo which claims a
+  # merge from a non-existentpath@REV1-REV2.
+  #
+  # ### Present test: test that 'svn log -g' does not report an error.
+  # ### Desirable test: test that 'svn log -g' produces the results expected
+  #     from ignoring all such revisions and reporting on all revisions that
+  #     are valid.
+
+  # In r2, create /A/B-copied as a copy of something that existed at r1, and
+  # /A/B-new as something new.  Manually set mergeinfo on /A/C@2 saying it
+  # was merged from the non-existent r1 of /A/B-copied, and on /A/D@2 saying
+  # it was merged from the non-existent r1 of /A/B-new.
   sbox.build()
   wc_path = sbox.wc_dir
+  B_copied_path = os.path.join(wc_path, 'A', 'B-copied')
+  B_new_path = os.path.join(wc_path, 'A', 'B-new')
+  B_path = os.path.join(wc_path, 'A', 'B')
+  C_path = os.path.join(wc_path, 'A', 'C')
   D_path = os.path.join(wc_path, 'A', 'D')
-  svntest.main.run_svn(None, 'ps', SVN_PROP_MERGEINFO, '/A/B:0', D_path)
-  #commit at r2
-  svntest.main.run_svn(None, 'ci', '-m', 'setting bogus mergeinfo', D_path)
-  exit_code, output, err = svntest.actions.run_and_verify_svn(None, None,
-                                                              [], 'log',
-                                                              '-g', D_path)
-  if len(err):
-    raise svntest.Failure("svn log -g target_with_bogus_mergeinfo fails")
+  svntest.main.run_svn(None, 'cp', B_path, B_copied_path)
+  svntest.main.run_svn(None, 'ps', SVN_PROP_MERGEINFO, '/A/B-copied:1', C_path)
+  svntest.main.run_svn(None, 'mkdir', B_new_path)
+  svntest.main.run_svn(None, 'ps', SVN_PROP_MERGEINFO, '/A/B-new:1', D_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'setting bogus mergeinfo', wc_path)
 
+  # The tests: Check that 'svn log -g' doesn't error on these.
+  svntest.actions.run_and_verify_svn(None, None, [], 'log', '-g', C_path)
+  svntest.actions.run_and_verify_svn(None, None, [], 'log', '-g', D_path)
+
+@SkipUnless(server_has_mergeinfo)
+@Issue(3235)
 def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
   "log -g and explicit mergeinfo replacing inherited"
 
@@ -1461,6 +1563,11 @@ def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
     'H/psi'   : Item(status='U '),
     'G/rho'   : Item(status='U '),
     'H/omega' : Item(status='U '),
+    })
+  expected_mergeinfo_output = wc.State(D_COPY_path, {
+    ''        : Item(status=' U'),
+    })
+  expected_elision_output = wc.State(D_COPY_path, {
     })
   expected_status = wc.State(D_COPY_path, {
     ''        : Item(status=' M', wc_rev=2),
@@ -1488,8 +1595,10 @@ def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
     })
   expected_skip = wc.State(D_COPY_path, { })
   svntest.actions.run_and_verify_merge(D_COPY_path, None, None,
-                                       sbox.repo_url + '/A/D',
+                                       sbox.repo_url + '/A/D', None,
                                        expected_output,
+                                       expected_mergeinfo_output,
+                                       expected_elision_output,
                                        expected_disk,
                                        expected_status,
                                        expected_skip,
@@ -1518,11 +1627,17 @@ def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
   # Reverse merge r3 from 'A/D/H' to 'A_COPY/D/H' and commit as r8.
   # First update the wc so mergeinfo inheritance can occur.  This is
   # necessary so A_COPY/D/H 'knows' that r3 has been merged into it.
-  svntest.actions.run_and_verify_svn(None, ["At revision 7.\n"], [],
+  svntest.actions.run_and_verify_svn(None,
+                                     exp_noop_up_out(7), [],
                                      'up', wc_dir)
   wc_status.tweak(wc_rev=7)
   expected_output = wc.State(H_COPY_path, {
     'psi' : Item(status='U ')
+    })
+  expected_mergeinfo_output = wc.State(H_COPY_path, {
+    ''    : Item(status=' G'),
+    })
+  expected_elision_output = wc.State(H_COPY_path, {
     })
   expected_status = wc.State(H_COPY_path, {
     ''      : Item(status=' M', wc_rev=7),
@@ -1538,8 +1653,11 @@ def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
     })
   expected_skip = wc.State(H_COPY_path, { })
   svntest.actions.run_and_verify_merge(H_COPY_path, '3', '2',
-                                       sbox.repo_url + '/A/D/H',
-                                       expected_output, expected_disk,
+                                       sbox.repo_url + '/A/D/H', None,
+                                       expected_output,
+                                       expected_mergeinfo_output,
+                                       expected_elision_output,
+                                       expected_disk,
                                        expected_status, expected_skip,
                                        None, None, None, None, None, 1)
 
@@ -1570,7 +1688,8 @@ def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
 
   def run_log_g_r8(log_target):
     expected_merges = {
-      8 : [],
+      8 : []}
+    expected_reverse_merges = {
       3 : [8]}
     exit_code, output, err = svntest.actions.run_and_verify_svn(None, None,
                                                                 [],
@@ -1578,7 +1697,7 @@ def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
                                                                 '-r8',
                                                                 log_target)
     log_chain = parse_log_output(output)
-    check_merge_results(log_chain, expected_merges)
+    check_merge_results(log_chain, expected_merges, expected_reverse_merges)
 
   run_log_g_r8(wc_dir)
   run_log_g_r8(os.path.join(wc_dir, "A_COPY"))
@@ -1588,6 +1707,8 @@ def merge_sensitive_log_added_mergeinfo_replaces_inherited(sbox):
 
 #----------------------------------------------------------------------
 
+@SkipUnless(server_has_mergeinfo)
+@Issue(3285)
 def merge_sensitive_log_propmod_merge_inheriting_path(sbox):
   "log -g and simple propmod to merge-inheriting path"
 
@@ -1664,7 +1785,7 @@ def log_of_local_copy(sbox):
                                      C_path, C_moved_path)
   svntest.actions.run_and_verify_svn(None, None, [], 'mv',
                                      psi_path, psi_moved_path)
-  
+
   # Get the logs for the move destinations.
   #
   # This was failing with:
@@ -1692,6 +1813,221 @@ def log_of_local_copy(sbox):
                           "differs from that on move source '%s'"
                           % (psi_moved_path, psi_path))
 
+#----------------------------------------------------------------------
+
+@SkipUnless(server_has_mergeinfo)
+@Issue(3176)
+def merge_sensitive_log_reverse_merges(sbox):
+  "log -g differentiates forward and reverse merges"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  wc_disk, wc_status = set_up_branch(sbox)
+
+  A_path      = os.path.join(wc_dir, 'A')
+  A_COPY_path = os.path.join(wc_dir, 'A_COPY')
+  D_COPY_path = os.path.join(wc_dir, 'A_COPY', 'D')
+
+  # Merge -c3,5 from A to A_COPY, commit as r7
+  svntest.main.run_svn(None, 'up', wc_dir)
+  svntest.main.run_svn(None, 'merge', '-c3,5', A_path, A_COPY_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'Merge -c3,5 from A to A_COPY',
+                       wc_dir)
+
+  # Merge -c-3,-5,4,6 from A to A_COPY, commit as r8
+  svntest.main.run_svn(None, 'up', wc_dir)
+  svntest.main.run_svn(None, 'merge', '-c-3,4,-5,6', A_path, A_COPY_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'Merge -c-3,-5,4,6 from A to A_COPY',
+                       wc_dir)
+
+  # Update so
+  svntest.main.run_svn(None, 'up', wc_dir)
+
+  # Run log -g on path with explicit mergeinfo (A_COPY).
+  exit_code, out, err = svntest.actions.run_and_verify_svn(None, None, [],
+                                                           'log', '-g', '-r8',
+                                                           A_COPY_path)
+  log_chain = parse_log_output(out)
+  expected_merges = {
+    8 : [],
+    6 : [8],
+    4 : [8],
+  }
+  expected_reverse_merges = {
+    5 : [8],
+    3 : [8],
+  }
+  check_merge_results(log_chain, expected_merges, expected_reverse_merges)
+
+  # Run log -g on path with inherited mergeinfo (A_COPY/D).
+  exit_code, out, err = svntest.actions.run_and_verify_svn(None, None, [],
+                                                           'log', '-g', '-r8',
+                                                           D_COPY_path)
+  log_chain = parse_log_output(out)
+  # expected_merges is the same as before.
+  expected_reverse_merges = {
+    # 5 : [8], r5 only affects A_COPY/B/E/beta
+    3 : [8],
+  }
+  check_merge_results(log_chain, expected_merges, expected_reverse_merges)
+
+#----------------------------------------------------------------------
+
+@SkipUnless(server_has_mergeinfo)
+@Issue(3650)
+def merge_sensitive_log_ignores_cyclic_merges(sbox):
+  "log -g should ignore cyclic merges"
+
+  sbox.build()
+  wc_dir = sbox.wc_dir
+  wc_disk, wc_status = set_up_branch(sbox)
+
+  A_path        = os.path.join(wc_dir, 'A')
+  X_path        = os.path.join(wc_dir, 'A', 'C', 'X')
+  kappa_path    = os.path.join(wc_dir, 'A', 'C', 'X', 'kappa')
+  chi_path      = os.path.join(wc_dir, 'A', 'D', 'H', 'chi')
+  A_COPY_path   = os.path.join(wc_dir, 'A_COPY')
+  mu_COPY_path  = os.path.join(wc_dir, 'A_COPY', 'mu')
+  tau_COPY_path = os.path.join(wc_dir, 'A_COPY', 'D', 'G', 'tau')
+  Z_COPY_path   = os.path.join(wc_dir, 'A_COPY', 'C', 'Z')
+  nu_COPY_path  = os.path.join(wc_dir, 'A_COPY', 'C', 'Z', 'nu')
+
+  # Make an edit on the "branch" to A_COPY/mu, commit as r7.
+  svntest.main.file_write(mu_COPY_path, "Branch edit.\n")
+  svntest.main.run_svn(None, 'ci', '-m', 'Branch edit', wc_dir)
+
+  # Make an edit on both the "trunk" and the "branch", commit as r8.
+  svntest.main.file_write(chi_path, "Trunk edit.\n")
+  svntest.main.file_write(tau_COPY_path, "Branch edit.\n")
+  svntest.main.run_svn(None, 'ci', '-m', 'Branch and trunk edits in one rev',
+                       wc_dir)
+
+  # Sync merge A to A_COPY, commit as r9
+  svntest.main.run_svn(None, 'up', wc_dir)
+  svntest.main.run_svn(None, 'merge', sbox.repo_url + '/A', A_COPY_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'Sync merge A to A_COPY', wc_dir)
+
+  # Reintegrate A_COPY to A, commit as r10
+  svntest.main.run_svn(None, 'up', wc_dir)
+  svntest.main.run_svn(None, 'merge', '--reintegrate',
+                       sbox.repo_url + '/A_COPY', A_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'Reintegrate A_COPY to A', wc_dir)
+
+  # Do a --record-only merge of r10 from A to A_COPY, commit as r11.
+  # This will allow us to continue using the branch without deleting it.
+  svntest.main.run_svn(None, 'up', wc_dir)
+  svntest.main.run_svn(None, 'merge', sbox.repo_url + '/A', A_COPY_path)
+  svntest.main.run_svn(None, 'ci', '-m',
+                       '--record-only merge r10 from A to A_COPY', wc_dir)
+
+  # Make an edit on the "branch"; add A_COPY/C and A_COPY/C/Z/nu,
+  # commit as r12.
+  svntest.main.run_svn(None, 'mkdir', Z_COPY_path)
+  svntest.main.file_write(nu_COPY_path, "A new branch file.\n")
+  svntest.main.run_svn(None, 'add', nu_COPY_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'Branch edit: Add a subtree', wc_dir)
+
+  # Make an edit on the "trunk"; add A/C/X and A/C/X/kappa,
+  # commit as r13.
+  svntest.main.run_svn(None, 'mkdir', X_path)
+  svntest.main.file_write(kappa_path, "A new trunk file.\n")
+  svntest.main.run_svn(None, 'add', kappa_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'Trunk edit: Add a subtree', wc_dir)
+  svntest.main.run_svn(None, 'up', wc_dir)
+
+  # Sync merge A to A_COPY, commit as r14
+  svntest.main.run_svn(None, 'up', wc_dir)
+  svntest.main.run_svn(None, 'merge', sbox.repo_url + '/A', A_COPY_path)
+  svntest.main.run_svn(None, 'ci', '-m', 'Sync merge A to A_COPY', wc_dir)
+
+  # Reintegrate A_COPY to A, commit as r15
+  svntest.main.run_svn(None, 'up', wc_dir)
+  svntest.main.run_svn(None, 'merge', '--reintegrate',
+                       sbox.repo_url + '/A_COPY', A_path)
+  svntest.main.run_svn(None, 'ci', '-m', '2nd reintegrate of A_COPY to A',
+                       wc_dir)
+
+  # Run 'svn log -g A'.  We expect to see r13, r10, r6, r5, r4, and r3 only
+  # once, as part of A's own history, not as merged in from A_COPY.
+  expected_merges = {
+    15 : [],
+    14 : [15],
+    13 : [],
+    12 : [15],
+    11 : [15],
+    10 : [],
+    9  : [15,11],
+    8  : [15,11,9],
+    7  : [15,11],
+    6  : [],
+    5  : [],
+    4  : [],
+    3  : [],
+    2  : [15,11],
+    1  : [],
+  }
+  svntest.main.run_svn(None, 'up', wc_dir)
+  exit_code, out, err = svntest.actions.run_and_verify_svn(None, None, [],
+                                                           'log', '-g',
+                                                           A_path)
+  log_chain = parse_log_output(out)
+  check_merge_results(log_chain, expected_merges)
+
+#----------------------------------------------------------------------
+@Issue(3931,3936)
+def log_with_unrelated_peg_and_operative_revs(sbox):
+  "log with unrelated peg and operative rev targets"
+
+  guarantee_repos_and_wc(sbox)
+
+  target = sbox.repo_url + '/A/D/G/rho@2'
+
+  # log for /A/D/G/rho, deleted in revision 5, recreated in revision 8
+  expected_error = ".*(File|path) not found.*"
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-r', '6:7', target)
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-r', '7:6', target)
+
+  expected_error = ".*Unable to find repository location for.*"
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-r', '2:9', target)
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-r', '9:2', target)
+
+  expected_error = ".*Unable to find repository location for.*"
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-r', '2:HEAD', target)
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-r', 'HEAD:2', target)
+
+#----------------------------------------------------------------------
+@Issue(3937)
+def log_on_nonexistent_path_and_valid_rev(sbox):
+  "log on nonexistent path does not error out"
+
+  sbox.build(create_wc=False)
+  real_path_real_rev   = sbox.repo_url + '/A@1'
+  real_path_bad_rev    = sbox.repo_url + '/A@99'
+  bad_url_bad_rev      = sbox.repo_url + '/Z@99'
+  bad_path_real_rev    = sbox.repo_url + '/Z@1'
+  bad_path_default_rev = sbox.repo_url + '/Z'
+
+  svntest.actions.run_and_verify_svn(None, None, [],
+                                     'log', '-q', real_path_real_rev)
+
+  expected_error = ".*No such revision 99*"
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-q', real_path_bad_rev)
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-q', bad_url_bad_rev)
+
+  expected_error = ".*not found.*"
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-q', bad_path_real_rev)
+  svntest.actions.run_and_verify_svn(None, None, expected_error,
+                                     'log', '-q', bad_path_default_rev)
+
 ########################################################################
 # Run the tests
 
@@ -1712,27 +2048,25 @@ test_list = [ None,
               log_base_peg,
               log_verbose,
               log_parser,
-              SkipUnless(merge_sensitive_log_single_revision,
-                         server_has_mergeinfo),
-              SkipUnless(merge_sensitive_log_branching_revision,
-                         server_has_mergeinfo),
-              SkipUnless(merge_sensitive_log_non_branching_revision,
-                         server_has_mergeinfo),
-              SkipUnless(merge_sensitive_log_added_path,
-                         server_has_mergeinfo),
+              merge_sensitive_log_single_revision,
+              merge_sensitive_log_branching_revision,
+              merge_sensitive_log_non_branching_revision,
+              merge_sensitive_log_added_path,
               log_single_change,
-              XFail(log_changes_range),
+              log_changes_range,
               log_changes_list,
+              log_changes_complex,
               only_one_wc_path,
               retrieve_revprops,
               log_xml_with_bad_data,
-              SkipUnless(merge_sensitive_log_target_with_bogus_mergeinfo,
-                         server_has_mergeinfo),
-              SkipUnless(merge_sensitive_log_added_mergeinfo_replaces_inherited,
-                         server_has_mergeinfo),
-              SkipUnless(merge_sensitive_log_propmod_merge_inheriting_path,
-                         server_has_mergeinfo),
+              merge_sensitive_log_target_with_bogus_mergeinfo,
+              merge_sensitive_log_added_mergeinfo_replaces_inherited,
+              merge_sensitive_log_propmod_merge_inheriting_path,
               log_of_local_copy,
+              merge_sensitive_log_reverse_merges,
+              merge_sensitive_log_ignores_cyclic_merges,
+              log_with_unrelated_peg_and_operative_revs,
+              log_on_nonexistent_path_and_valid_rev,
              ]
 
 if __name__ == '__main__':

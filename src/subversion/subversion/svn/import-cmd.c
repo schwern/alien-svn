@@ -2,17 +2,22 @@
  * import-cmd.c -- Import a file or tree into the repository.
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -43,7 +48,6 @@ svn_cl__import(apr_getopt_t *os,
   apr_array_header_t *targets;
   const char *path;
   const char *url;
-  svn_commit_info_t *commit_info = NULL;
 
   /* Import takes two arguments, for example
    *
@@ -75,7 +79,7 @@ svn_cl__import(apr_getopt_t *os,
 
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
                                                       opt_state->targets,
-                                                      ctx, pool));
+                                                      ctx, FALSE, pool));
 
   if (targets->nelts < 1)
     return svn_error_create
@@ -96,14 +100,11 @@ svn_cl__import(apr_getopt_t *os,
       url = APR_ARRAY_IDX(targets, 1, const char *);
     }
 
-  if (! svn_path_is_url(url))
-    return svn_error_createf
-      (SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
-       _("Invalid URL '%s'"), url);
+  SVN_ERR(svn_cl__check_target_is_local_path(path));
 
-  if (! opt_state->quiet)
-    svn_cl__get_notifier(&ctx->notify_func2, &ctx->notify_baton2,
-                         FALSE, FALSE, FALSE, pool);
+  if (! svn_path_is_url(url))
+    return svn_error_createf(SVN_ERR_CL_ARG_PARSING_ERROR, NULL,
+                             _("Invalid URL '%s'"), url);
 
   if (opt_state->depth == svn_depth_unknown)
     opt_state->depth = svn_depth_infinity;
@@ -113,18 +114,17 @@ svn_cl__import(apr_getopt_t *os,
 
   SVN_ERR(svn_cl__cleanup_log_msg
           (ctx->log_msg_baton3,
-           svn_client_import3(&commit_info,
-                              path,
+           svn_client_import4(path,
                               url,
                               opt_state->depth,
                               opt_state->no_ignore,
                               opt_state->force,
                               opt_state->revprop_table,
+                              (opt_state->quiet
+                               ? NULL : svn_cl__print_commit_info),
+                              NULL,
                               ctx,
                               pool), pool));
-
-  if (commit_info && ! opt_state->quiet)
-    SVN_ERR(svn_cl__print_commit_info(commit_info, pool));
 
   return SVN_NO_ERROR;
 }

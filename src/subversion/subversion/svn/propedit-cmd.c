@@ -2,17 +2,22 @@
  * propedit-cmd.c -- Edit properties of files/dirs using $EDITOR
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -27,20 +32,39 @@
 #include "svn_pools.h"
 #include "svn_client.h"
 #include "svn_string.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_error.h"
 #include "svn_utf.h"
 #include "svn_props.h"
 #include "cl.h"
 
-/* We shouldn't be including a private header here, but it is
- * necessary for fixing issue #3416 */
-#include "private/svn_opt_private.h"
+#include "private/svn_wc_private.h"
 
 #include "svn_private_config.h"
 
 
 /*** Code. ***/
+struct commit_info_baton
+{
+  const char *pname_utf8;
+  const char *target_local;
+};
+
+static svn_error_t *
+commit_info_handler(const svn_commit_info_t *commit_info,
+                    void *baton,
+                    apr_pool_t *pool)
+{
+  struct commit_info_baton *cib = baton;
+
+  SVN_ERR(svn_cmdline_printf(pool,
+                             _("Set new value for property '%s' on '%s'\n"),
+                             cib->pname_utf8, cib->target_local));
+  SVN_ERR(svn_cl__print_commit_info(commit_info, NULL, pool));
+
+  return SVN_NO_ERROR;
+}
 
 /* This implements the `svn_opt_subcommand_t' interface. */
 svn_error_t *
@@ -52,7 +76,6 @@ svn_cl__propedit(apr_getopt_t *os,
   svn_client_ctx_t *ctx = ((svn_cl__cmd_baton_t *) baton)->ctx;
   const char *pname, *pname_utf8;
   apr_array_header_t *args, *targets;
-  int i;
 
   /* Validate the input and get the property's name (and a UTF-8
      version of that name). */
@@ -72,7 +95,10 @@ svn_cl__propedit(apr_getopt_t *os,
   /* Suck up all the remaining arguments into a targets array */
   SVN_ERR(svn_cl__args_to_target_array_print_reserved(&targets, os,
                                                       opt_state->targets,
-                                                      ctx, pool));
+                                                      ctx, FALSE, pool));
+
+  /* We do our own notifications */
+  ctx->notify_func2 = NULL;
 
   if (opt_state->revprop)  /* operate on a revprop */
     {
@@ -87,7 +113,7 @@ svn_cl__propedit(apr_getopt_t *os,
       svn_opt_push_implicit_dot_target(targets, pool);
 
       SVN_ERR(svn_cl__revprop_prepare(&opt_state->start_revision, targets,
-                                      &URL, pool));
+                                      &URL, ctx, pool));
 
       /* Fetch the current property. */
       SVN_ERR(svn_client_revprop_get(pname_utf8, &propval,
@@ -149,6 +175,8 @@ svn_cl__propedit(apr_getopt_t *os,
   else  /* operate on a normal, versioned property (not a revprop) */
     {
       apr_pool_t *subpool = svn_pool_create(pool);
+      struct commit_info_baton cib;
+      int i;
 
       /* The customary implicit dot rule has been prone to user error
        * here.  For example, Jon Trowbridge <trow@gnu.og> did
@@ -172,7 +200,9 @@ svn_cl__propedit(apr_getopt_t *os,
              _("Explicit target argument required"));
         }
 
-      SVN_ERR(svn_opt__eat_peg_revisions(&targets, targets, pool));
+      SVN_ERR(svn_cl__eat_peg_revisions(&targets, targets, pool));
+
+      cib.pname_utf8 = pname_utf8;
 
       /* For each target, edit the property PNAME. */
       for (i = 0; i < targets->nelts; i++)
@@ -182,27 +212,35 @@ svn_cl__propedit(apr_getopt_t *os,
           svn_string_t *propval, *edited_propval;
           const char *base_dir = target;
           const char *target_local;
-          svn_wc_adm_access_t *adm_access;
-          const svn_wc_entry_t *entry;
+          const char *local_abspath;
+          svn_node_kind_t kind;
           svn_opt_revision_t peg_revision;
           svn_revnum_t base_rev = SVN_INVALID_REVNUM;
 
           svn_pool_clear(subpool);
           SVN_ERR(svn_cl__check_cancel(ctx->cancel_baton));
 
+          if (!svn_path_is_url(target))
+            SVN_ERR(svn_dirent_get_absolute(&local_abspath, target, subpool));
+
           /* Propedits can only happen on HEAD or the working copy, so
              the peg revision can be as unspecified. */
           peg_revision.kind = svn_opt_revision_unspecified;
 
           /* Fetch the current property. */
-          SVN_ERR(svn_client_propget3(&props, pname_utf8, target,
+          SVN_ERR(svn_client_propget4(&props, pname_utf8,
+                                      svn_path_is_url(target)
+                                        ? target : local_abspath,
                                       &peg_revision,
                                       &(opt_state->start_revision),
                                       &base_rev, svn_depth_empty,
-                                      NULL, ctx, subpool));
+                                      NULL, ctx, subpool, subpool));
 
           /* Get the property value. */
-          propval = apr_hash_get(props, target, APR_HASH_KEY_STRING);
+          propval = apr_hash_get(props,
+                                 svn_path_is_url(target)
+                                    ? target : local_abspath,
+                                 APR_HASH_KEY_STRING);
           if (! propval)
             propval = svn_string_create("", subpool);
 
@@ -223,16 +261,15 @@ svn_cl__propedit(apr_getopt_t *os,
                 }
 
               /* Split the path if it is a file path. */
-              SVN_ERR(svn_wc_adm_probe_open3(&adm_access, NULL, target,
-                                             FALSE, 0, ctx->cancel_func,
-                                             ctx->cancel_baton, subpool));
-              SVN_ERR(svn_wc_entry(&entry, target, adm_access, FALSE, subpool));
-              if (! entry)
-                return svn_error_createf
-                  (SVN_ERR_ENTRY_NOT_FOUND, NULL,
+              SVN_ERR(svn_wc_read_kind(&kind, ctx->wc_ctx, local_abspath, FALSE,
+                                       subpool));
+
+              if (kind == svn_node_none)
+                return svn_error_createf(
+                   SVN_ERR_ENTRY_NOT_FOUND, NULL,
                    _("'%s' does not appear to be a working copy path"), target);
-              if (entry->kind == svn_node_file)
-                svn_path_split(target, &base_dir, NULL, subpool);
+              if (kind == svn_node_file)
+                base_dir = svn_dirent_dirname(target, subpool);
             }
 
           /* Run the editor on a temporary file which contains the
@@ -249,12 +286,12 @@ svn_cl__propedit(apr_getopt_t *os,
                                                  subpool));
 
           target_local = svn_path_is_url(target) ? target
-            : svn_path_local_style(target, subpool);
+            : svn_dirent_local_style(target, subpool);
+          cib.target_local = target_local;
 
           /* ...and re-set the property's value accordingly. */
           if (edited_propval && !svn_string_compare(propval, edited_propval))
             {
-              svn_commit_info_t *commit_info = NULL;
               svn_error_t *err = SVN_NO_ERROR;
 
               svn_cl__check_boolean_prop_val(pname_utf8, edited_propval->data,
@@ -264,29 +301,40 @@ svn_cl__propedit(apr_getopt_t *os,
                 SVN_ERR(svn_cl__make_log_msg_baton(&(ctx->log_msg_baton3),
                                                    opt_state, NULL, ctx->config,
                                                    subpool));
+              if (svn_path_is_url(target))
+                {
+                  err = svn_client_propset_remote(pname_utf8, edited_propval,
+                                                  target, opt_state->force,
+                                                  base_rev,
+                                                  opt_state->revprop_table,
+                                                  commit_info_handler, &cib,
+                                                  ctx, subpool);
+                }
+              else
+                {
+                  apr_array_header_t *targs = apr_array_make(subpool, 1,
+                                                    sizeof(const char *));
 
-              err = svn_client_propset3(&commit_info,
-                                        pname_utf8, edited_propval, target,
-                                        svn_depth_empty, opt_state->force,
-                                        base_rev, NULL, opt_state->revprop_table,
-                                        ctx, subpool);
+                  APR_ARRAY_PUSH(targs, const char *) = target;
+                  err = svn_client_propset_local(pname_utf8, edited_propval,
+                                                 targs, svn_depth_empty,
+                                                 opt_state->force, NULL,
+                                                 ctx, subpool);
+                }
+
               if (ctx->log_msg_func3)
                 SVN_ERR(svn_cl__cleanup_log_msg(ctx->log_msg_baton3,
                                                 err, pool));
               else if (err)
-                return err;
+                return svn_error_trace(err);
 
               /* Print a message if we successfully committed or if it
                  was just a wc propset (but not if the user aborted an URL
                  propedit). */
-              if (commit_info || ! svn_path_is_url(target))
-                SVN_ERR
-                  (svn_cmdline_printf
-                   (subpool, _("Set new value for property '%s' on '%s'\n"),
-                    pname_utf8, target_local));
-
-              if (commit_info && ! opt_state->quiet)
-                SVN_ERR(svn_cl__print_commit_info(commit_info, subpool));
+              if (!svn_path_is_url(target))
+                SVN_ERR(svn_cmdline_printf(
+                        subpool, _("Set new value for property '%s' on '%s'\n"),
+                        pname_utf8, target_local));
             }
           else
             {

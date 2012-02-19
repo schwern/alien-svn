@@ -18,6 +18,7 @@
 
 /* for raw pointers */
 #define SWIG_ConvertPtr(obj, pp, type, flags)           SWIG_Perl_ConvertPtr(SWIG_PERL_OBJECT_CALL obj, pp, type, flags)
+#define SWIG_ConvertPtrAndOwn(obj, pp, type, flags,own) SWIG_Perl_ConvertPtrAndOwn(SWIG_PERL_OBJECT_CALL obj, pp, type, flags, own)
 #define SWIG_NewPointerObj(p, type, flags)              SWIG_Perl_NewPointerObj(SWIG_PERL_OBJECT_CALL p, type, flags)
 
 /* for raw packed data */
@@ -205,20 +206,43 @@ SWIG_Perl_TypeProxyName(const swig_type_info *type) {
   }
 }
 
+/* Identical to SWIG_TypeCheck, except for strcmp comparison */
 SWIGRUNTIME swig_cast_info *
 SWIG_TypeProxyCheck(const char *c, swig_type_info *ty) {
-  SWIG_TypeCheck_Template(( (!iter->type->clientdata && (strcmp(iter->type->name, c) == 0)) 
-			    || (iter->type->clientdata && (strcmp((char*)iter->type->clientdata, c) == 0))), ty);
+  if (ty) {
+    swig_cast_info *iter = ty->cast;
+    while (iter) {
+      if ( (!iter->type->clientdata && (strcmp(iter->type->name, c) == 0)) ||
+            (iter->type->clientdata && (strcmp((char*)iter->type->clientdata, c) == 0)) ) {
+        if (iter == ty->cast)
+          return iter;
+        /* Move iter to the top of the linked list */
+        iter->prev->next = iter->next;
+        if (iter->next)
+          iter->next->prev = iter->prev;
+        iter->next = ty->cast;
+        iter->prev = 0;
+        if (ty->cast) ty->cast->prev = iter;
+        ty->cast = iter;
+        return iter;
+      }
+      iter = iter->next;
+    }
+  }
+  return 0;
 }
-
 
 /* Function for getting a pointer value */
 
 SWIGRUNTIME int
-SWIG_Perl_ConvertPtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void **ptr, swig_type_info *_t, int flags) {
+SWIG_Perl_ConvertPtrAndOwn(SWIG_MAYBE_PERL_OBJECT SV *sv, void **ptr, swig_type_info *_t, int flags, int *own) {
   swig_cast_info *tc;
   void *voidptr = (void *)0;
   SV *tsv = 0;
+
+  if (own)
+    *own = 0;
+
   /* If magical, apply more magic */
   if (SvGMAGICAL(sv))
     mg_get(sv);
@@ -250,8 +274,14 @@ SWIG_Perl_ConvertPtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void **ptr, swig_type_info *
     return SWIG_OK;
   } else if (SvTYPE(sv) == SVt_RV) {  /* Check for NULL pointer */
     if (!SvROK(sv)) {
-      *(ptr) = (void *) 0;
-      return SWIG_OK;
+      /* In Perl 5.12 and later, SVt_RV == SVt_IV, so sv could be a valid integer value.  */
+      if (SvIOK(sv)) {
+        return SWIG_ERROR;
+      } else {
+        /* NULL pointer (reference to undef). */
+        *(ptr) = (void *) 0;
+        return SWIG_OK;
+      }
     } else {
       return SWIG_ERROR;
     }
@@ -268,7 +298,11 @@ SWIG_Perl_ConvertPtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void **ptr, swig_type_info *
     {
       int newmemory = 0;
       *ptr = SWIG_TypeCast(tc,voidptr,&newmemory);
-      assert(!newmemory); /* newmemory handling not yet implemented */
+      if (newmemory == SWIG_CAST_NEW_MEMORY) {
+        assert(own); /* badly formed typemap which will lead to a memory leak - it must set and use own to delete *ptr */
+        if (own)
+          *own = *own | SWIG_CAST_NEW_MEMORY;
+      }
     }
   } else {
     *ptr = voidptr;
@@ -283,7 +317,7 @@ SWIG_Perl_ConvertPtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void **ptr, swig_type_info *
      */
     SV *obj = sv;
     HV *stash = SvSTASH(SvRV(obj));
-    GV *gv = *(GV**) hv_fetch(stash, "OWNER", 5, TRUE);
+    GV *gv = *(GV**)hv_fetch(stash, "OWNER", 5, TRUE);
     if (isGV(gv)) {
       HV *hv = GvHVn(gv);
       /*
@@ -298,9 +332,14 @@ SWIG_Perl_ConvertPtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void **ptr, swig_type_info *
   return SWIG_OK;
 }
 
+SWIGRUNTIME int
+SWIG_Perl_ConvertPtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void **ptr, swig_type_info *_t, int flags) {
+  return SWIG_Perl_ConvertPtrAndOwn(sv, ptr, _t, flags, 0);
+}
+
 SWIGRUNTIME void
 SWIG_Perl_MakePtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void *ptr, swig_type_info *t, int flags) {
-  if (ptr && (flags & SWIG_SHADOW)) {
+  if (ptr && (flags & (SWIG_SHADOW | SWIG_POINTER_OWN))) {
     SV *self;
     SV *obj=newSV(0);
     HV *hash=newHV();
@@ -309,7 +348,7 @@ SWIG_Perl_MakePtr(SWIG_MAYBE_PERL_OBJECT SV *sv, void *ptr, swig_type_info *t, i
     stash=SvSTASH(SvRV(obj));
     if (flags & SWIG_POINTER_OWN) {
       HV *hv;
-      GV *gv=*(GV**)hv_fetch(stash, "OWNER", 5, TRUE);
+      GV *gv = *(GV**)hv_fetch(stash, "OWNER", 5, TRUE);
       if (!isGV(gv))
         gv_init(gv, stash, "OWNER", 5, FALSE);
       hv=GvHVn(gv);

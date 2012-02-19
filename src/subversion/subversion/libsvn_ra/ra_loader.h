@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2005-2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -46,43 +51,54 @@ typedef struct svn_ra__vtable_t {
 
   /* Implementations of the public API functions. */
 
+  /* See svn_ra_open4(). */
   /* All fields in SESSION, except priv, have been initialized by the
      time this is called.  SESSION->priv may be set by this function. */
   svn_error_t *(*open_session)(svn_ra_session_t *session,
+                               const char **corrected_url,
                                const char *repos_URL,
                                const svn_ra_callbacks2_t *callbacks,
                                void *callback_baton,
                                apr_hash_t *config,
                                apr_pool_t *pool);
+  /* See svn_ra_reparent(). */
   /* URL is guaranteed to have what get_repos_root() returns as a prefix. */
   svn_error_t *(*reparent)(svn_ra_session_t *session,
                            const char *url,
                            apr_pool_t *pool);
+  /* See svn_ra_get_session_url(). */
   svn_error_t *(*get_session_url)(svn_ra_session_t *session,
                                   const char **url,
                                   apr_pool_t *pool);
+  /* See svn_ra_get_latest_revnum(). */
   svn_error_t *(*get_latest_revnum)(svn_ra_session_t *session,
                                     svn_revnum_t *latest_revnum,
                                     apr_pool_t *pool);
+  /* See svn_ra_get_dated_revision(). */
   svn_error_t *(*get_dated_revision)(svn_ra_session_t *session,
                                      svn_revnum_t *revision,
                                      apr_time_t tm,
                                      apr_pool_t *pool);
+  /* See svn_ra_change_rev_prop2(). */
   svn_error_t *(*change_rev_prop)(svn_ra_session_t *session,
                                   svn_revnum_t rev,
                                   const char *name,
+                                  const svn_string_t *const *old_value_p,
                                   const svn_string_t *value,
                                   apr_pool_t *pool);
 
+  /* See svn_ra_rev_proplist(). */
   svn_error_t *(*rev_proplist)(svn_ra_session_t *session,
                                svn_revnum_t rev,
                                apr_hash_t **props,
                                apr_pool_t *pool);
+  /* See svn_ra_rev_prop(). */
   svn_error_t *(*rev_prop)(svn_ra_session_t *session,
                            svn_revnum_t rev,
                            const char *name,
                            svn_string_t **value,
                            apr_pool_t *pool);
+  /* See svn_ra_get_commit_editor3(). */
   svn_error_t *(*get_commit_editor)(svn_ra_session_t *session,
                                     const svn_delta_editor_t **editor,
                                     void **edit_baton,
@@ -92,6 +108,7 @@ typedef struct svn_ra__vtable_t {
                                     apr_hash_t *lock_tokens,
                                     svn_boolean_t keep_locks,
                                     apr_pool_t *pool);
+  /* See svn_ra_get_file(). */
   svn_error_t *(*get_file)(svn_ra_session_t *session,
                            const char *path,
                            svn_revnum_t revision,
@@ -99,6 +116,7 @@ typedef struct svn_ra__vtable_t {
                            svn_revnum_t *fetched_rev,
                            apr_hash_t **props,
                            apr_pool_t *pool);
+  /* See svn_ra_get_dir2(). */
   svn_error_t *(*get_dir)(svn_ra_session_t *session,
                           apr_hash_t **dirents,
                           svn_revnum_t *fetched_rev,
@@ -107,6 +125,7 @@ typedef struct svn_ra__vtable_t {
                           svn_revnum_t revision,
                           apr_uint32_t dirent_fields,
                           apr_pool_t *pool);
+  /* See svn_ra_get_mergeinfo(). */
   svn_error_t *(*get_mergeinfo)(svn_ra_session_t *session,
                                 svn_mergeinfo_catalog_t *mergeinfo,
                                 const apr_array_header_t *paths,
@@ -114,6 +133,7 @@ typedef struct svn_ra__vtable_t {
                                 svn_mergeinfo_inheritance_t inherit,
                                 svn_boolean_t include_merged_revisions,
                                 apr_pool_t *pool);
+  /* See svn_ra_do_update2(). */
   svn_error_t *(*do_update)(svn_ra_session_t *session,
                             const svn_ra_reporter3_t **reporter,
                             void **report_baton,
@@ -124,6 +144,7 @@ typedef struct svn_ra__vtable_t {
                             const svn_delta_editor_t *update_editor,
                             void *update_baton,
                             apr_pool_t *pool);
+  /* See svn_ra_do_switch2(). */
   svn_error_t *(*do_switch)(svn_ra_session_t *session,
                             const svn_ra_reporter3_t **reporter,
                             void **report_baton,
@@ -134,6 +155,7 @@ typedef struct svn_ra__vtable_t {
                             const svn_delta_editor_t *switch_editor,
                             void *switch_baton,
                             apr_pool_t *pool);
+  /* See svn_ra_do_status2(). */
   svn_error_t *(*do_status)(svn_ra_session_t *session,
                             const svn_ra_reporter3_t **reporter,
                             void **report_baton,
@@ -143,6 +165,7 @@ typedef struct svn_ra__vtable_t {
                             const svn_delta_editor_t *status_editor,
                             void *status_baton,
                             apr_pool_t *pool);
+  /* See svn_ra_do_diff3(). */
   svn_error_t *(*do_diff)(svn_ra_session_t *session,
                           const svn_ra_reporter3_t **reporter,
                           void **report_baton,
@@ -155,6 +178,7 @@ typedef struct svn_ra__vtable_t {
                           const svn_delta_editor_t *diff_editor,
                           void *diff_baton,
                           apr_pool_t *pool);
+  /* See svn_ra_get_log2(). */
   svn_error_t *(*get_log)(svn_ra_session_t *session,
                           const apr_array_header_t *paths,
                           svn_revnum_t start,
@@ -167,28 +191,34 @@ typedef struct svn_ra__vtable_t {
                           svn_log_entry_receiver_t receiver,
                           void *receiver_baton,
                           apr_pool_t *pool);
+  /* See svn_ra_check_path(). */
   svn_error_t *(*check_path)(svn_ra_session_t *session,
                              const char *path,
                              svn_revnum_t revision,
                              svn_node_kind_t *kind,
                              apr_pool_t *pool);
+  /* See svn_ra_stat(). */
   svn_error_t *(*stat)(svn_ra_session_t *session,
                        const char *path,
                        svn_revnum_t revision,
                        svn_dirent_t **dirent,
                        apr_pool_t *pool);
+  /* See svn_ra_get_uuid2(). */
   svn_error_t *(*get_uuid)(svn_ra_session_t *session,
                            const char **uuid,
                            apr_pool_t *pool);
+  /* See svn_ra_get_repos_root2(). */
   svn_error_t *(*get_repos_root)(svn_ra_session_t *session,
                                  const char **url,
                                  apr_pool_t *pool);
+  /* See svn_ra_get_locations(). */
   svn_error_t *(*get_locations)(svn_ra_session_t *session,
                                 apr_hash_t **locations,
                                 const char *path,
                                 svn_revnum_t peg_revision,
-                                apr_array_header_t *location_revisions,
+                                const apr_array_header_t *location_revisions,
                                 apr_pool_t *pool);
+  /* See svn_ra_get_location_segments(). */
   svn_error_t *(*get_location_segments)(svn_ra_session_t *session,
                                         const char *path,
                                         svn_revnum_t peg_revision,
@@ -197,6 +227,7 @@ typedef struct svn_ra__vtable_t {
                                         svn_location_segment_receiver_t rcvr,
                                         void *receiver_baton,
                                         apr_pool_t *pool);
+  /* See svn_ra_get_file_revs2(). */
   svn_error_t *(*get_file_revs)(svn_ra_session_t *session,
                                 const char *path,
                                 svn_revnum_t start,
@@ -205,6 +236,7 @@ typedef struct svn_ra__vtable_t {
                                 svn_file_rev_handler_t handler,
                                 void *handler_baton,
                                 apr_pool_t *pool);
+  /* See svn_ra_lock(). */
   svn_error_t *(*lock)(svn_ra_session_t *session,
                        apr_hash_t *path_revs,
                        const char *comment,
@@ -212,20 +244,25 @@ typedef struct svn_ra__vtable_t {
                        svn_ra_lock_callback_t lock_func,
                        void *lock_baton,
                        apr_pool_t *pool);
+  /* See svn_ra_unlock(). */
   svn_error_t *(*unlock)(svn_ra_session_t *session,
                          apr_hash_t *path_tokens,
                          svn_boolean_t force,
                          svn_ra_lock_callback_t lock_func,
                          void *lock_baton,
                          apr_pool_t *pool);
+  /* See svn_ra_get_lock(). */
   svn_error_t *(*get_lock)(svn_ra_session_t *session,
                            svn_lock_t **lock,
                            const char *path,
                            apr_pool_t *pool);
+  /* See svn_ra_get_locks2(). */
   svn_error_t *(*get_locks)(svn_ra_session_t *session,
                             apr_hash_t **locks,
                             const char *path,
+                            svn_depth_t depth,
                             apr_pool_t *pool);
+  /* See svn_ra_replay(). */
   svn_error_t *(*replay)(svn_ra_session_t *session,
                          svn_revnum_t revision,
                          svn_revnum_t low_water_mark,
@@ -233,10 +270,12 @@ typedef struct svn_ra__vtable_t {
                          const svn_delta_editor_t *editor,
                          void *edit_baton,
                          apr_pool_t *pool);
+  /* See svn_ra_has_capability(). */
   svn_error_t *(*has_capability)(svn_ra_session_t *session,
                                  svn_boolean_t *has,
                                  const char *capability,
                                  apr_pool_t *pool);
+  /* See svn_ra_replay_range(). */
   svn_error_t *
   (*replay_range)(svn_ra_session_t *session,
                   svn_revnum_t start_revision,
@@ -247,12 +286,14 @@ typedef struct svn_ra__vtable_t {
                   svn_ra_replay_revfinish_callback_t revfinish_func,
                   void *replay_baton,
                   apr_pool_t *pool);
+  /* See svn_ra_get_deleted_rev(). */
   svn_error_t *(*get_deleted_rev)(svn_ra_session_t *session,
                                   const char *path,
                                   svn_revnum_t peg_revision,
                                   svn_revnum_t end_revision,
                                   svn_revnum_t *revision_deleted,
                                   apr_pool_t *pool);
+
 } svn_ra__vtable_t;
 
 /* The RA session object. */
@@ -319,7 +360,7 @@ svn_ra__locations_from_log(svn_ra_session_t *session,
                            apr_hash_t **locations_p,
                            const char *path,
                            svn_revnum_t peg_revision,
-                           apr_array_header_t *location_revisions,
+                           const apr_array_header_t *location_revisions,
                            apr_pool_t *pool);
 
 /**

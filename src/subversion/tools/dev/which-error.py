@@ -5,23 +5,28 @@
 #                 their numeric error code values
 #
 # ====================================================================
-# Copyright (c) 2005, 2008-2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# * This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
-# * This software consists of voluntary contributions made by many
-# individuals.  For exact contribution history, see the revision
-# history and logs, available at http://subversion.tigris.org/.
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 # ====================================================================
 #
-# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.6.x/tools/dev/which-error.py $
-# $LastChangedDate: 2009-01-30 20:47:46 +0000 (Fri, 30 Jan 2009) $
-# $LastChangedBy: arfrever $
-# $LastChangedRevision: 875675 $
+# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.7.x/tools/dev/which-error.py $
+# $LastChangedDate: 2011-07-08 13:53:27 +0000 (Fri, 08 Jul 2011) $
+# $LastChangedBy: philip $
+# $LastChangedRevision: 1144315 $
 #
 
 import sys
@@ -95,7 +100,7 @@ if __name__ == "__main__":
   elif sys.argv[1] == 'parse':
     if len(sys.argv) > 2:
       usage_and_exit()
-    while 1:
+    while True:
       line = sys.stdin.readline()
       if not line:
         break
@@ -108,6 +113,7 @@ if __name__ == "__main__":
   else:
     for code in sys.argv[1:]:
       try:
+        code = code.lstrip('EW')
         codes.append(int(code))
       except ValueError:
         usage_and_exit()

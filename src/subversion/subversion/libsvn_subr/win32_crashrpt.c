@@ -2,17 +2,22 @@
  * win32_crashrpt.c : provides information after a crash
  *
  * ====================================================================
- * Copyright (c) 2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -22,6 +27,7 @@
 /*** Includes. ***/
 #include <apr.h>
 #include <dbghelp.h>
+#include <direct.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -174,11 +180,16 @@ write_process_info(EXCEPTION_RECORD *exception, CONTEXT *context,
 {
   OSVERSIONINFO oi;
   const char *cmd_line;
+  char workingdir[8192];
 
   /* write the command line */
   cmd_line = GetCommandLine();
   fprintf(log_file,
-                "Cmd line: %.65s\n", cmd_line);
+                "Cmd line: %s\n", cmd_line);
+
+  _getcwd(workingdir, sizeof(workingdir));
+  fprintf(log_file,
+                "Working Dir: %s\n", workingdir);
 
   /* write the svn version number info. */
   fprintf(log_file,
@@ -364,7 +375,7 @@ format_value(char *value_str, DWORD64 mod_base, DWORD type, void *value_addr)
 
 /* Internal structure used to pass some data to the enumerate symbols
  * callback */
-typedef struct {
+typedef struct symbols_baton_t {
   STACKFRAME64 *stack_frame;
   FILE *log_file;
   int nr_of_frame;
@@ -392,7 +403,7 @@ write_var_values(PSYMBOL_INFO sym_info, ULONG sym_size, void *baton)
   else
     return FALSE;
 
-  if (log_params == TRUE && sym_info->Flags & SYMFLAG_PARAMETER)
+  if (log_params && sym_info->Flags & SYMFLAG_PARAMETER)
     {
       if (last_nr_of_frame == nr_of_frame)
         fprintf(log_file, ", ", 2);
@@ -415,10 +426,10 @@ write_var_values(PSYMBOL_INFO sym_info, ULONG sym_size, void *baton)
 
 /* Write the details of one function to the log file */
 static void
-write_function_detail(STACKFRAME64 stack_frame, void *data)
+write_function_detail(STACKFRAME64 stack_frame, int nr_of_frame, FILE *log_file)
 {
   ULONG64 symbolBuffer[(sizeof(SYMBOL_INFO) +
-    MAX_PATH +
+    MAX_SYM_NAME +
     sizeof(ULONG64) - 1) /
     sizeof(ULONG64)];
   PSYMBOL_INFO pIHS = (PSYMBOL_INFO)symbolBuffer;
@@ -429,21 +440,18 @@ write_function_detail(STACKFRAME64 stack_frame, void *data)
   DWORD line_disp=0;
 
   HANDLE proc = GetCurrentProcess();
-  FILE *log_file = (FILE *)data;
 
   symbols_baton_t ensym;
 
-  static int nr_of_frame = 0;
-
-  nr_of_frame++;
+  nr_of_frame++; /* We need a 1 based index here */
 
   /* log the function name */
   pIHS->SizeOfStruct = sizeof(SYMBOL_INFO);
-  pIHS->MaxNameLen = MAX_PATH;
-  if (SymFromAddr_(proc, stack_frame.AddrPC.Offset, &func_disp, pIHS) == TRUE)
+  pIHS->MaxNameLen = MAX_SYM_NAME;
+  if (SymFromAddr_(proc, stack_frame.AddrPC.Offset, &func_disp, pIHS))
     {
       fprintf(log_file,
-                    "#%d  0x%08I64x in %.200s (",
+                    "#%d  0x%08I64x in %.200s(",
                     nr_of_frame, stack_frame.AddrPC.Offset, pIHS->Name);
 
       /* restrict symbol enumeration to this frame only */
@@ -503,8 +511,12 @@ write_stacktrace(CONTEXT *context, FILE *log_file)
       skip = 1;
 
       ctx.ContextFlags = CONTEXT_FULL;
-      if (GetThreadContext(GetCurrentThread(), &ctx))
-        context = &ctx;
+      if (!GetThreadContext(GetCurrentThread(), &ctx))
+        return;
+    }
+  else
+    {
+      ctx = *context;
     }
 
   if (context == NULL)
@@ -539,7 +551,7 @@ write_stacktrace(CONTEXT *context, FILE *log_file)
   while (1)
     {
       if (! StackWalk64_(machine, proc, GetCurrentThread(),
-                         &stack_frame, context, NULL,
+                         &stack_frame, &ctx, NULL,
                          SymFunctionTableAccess64_, SymGetModuleBase64_, NULL))
         {
           break;
@@ -552,7 +564,7 @@ write_stacktrace(CONTEXT *context, FILE *log_file)
              returns TRUE with a frame of zero. */
           if (stack_frame.AddrPC.Offset != 0)
             {
-              write_function_detail(stack_frame, (void *)log_file);
+              write_function_detail(stack_frame, i, log_file);
             }
         }
       i++;
@@ -708,7 +720,7 @@ svn__unhandled_exception_filter(PEXCEPTION_POINTERS ptrs)
     return EXCEPTION_CONTINUE_SEARCH;
 
   /* don't log anything if we're running inside a debugger ... */
-  if (is_debugger_present() == TRUE)
+  if (is_debugger_present())
     return EXCEPTION_CONTINUE_SEARCH;
 
   /* ... or if we can't create the log files ... */
@@ -742,14 +754,12 @@ svn__unhandled_exception_filter(PEXCEPTION_POINTERS ptrs)
 
   fclose(log_file);
 
-  cleanup_debughlp();
-
   /* inform the user */
   fprintf(stderr, "This application has halted due to an unexpected error.\n"
                   "A crash report and minidump file were saved to disk, you"
                   " can find them here:\n"
                   "%s\n%s\n"
-                  "Please send the log file to %s to help us analyse\nand "
+                  "Please send the log file to %s to help us analyze\nand "
                   "solve this problem.\n\n"
                   "NOTE: The crash report and minidump files can contain some"
                   " sensitive information\n(filenames, partial file content, "
@@ -757,6 +767,21 @@ svn__unhandled_exception_filter(PEXCEPTION_POINTERS ptrs)
                   log_filename,
                   dmp_filename,
                   CRASHREPORT_EMAIL);
+
+  if (getenv("SVN_DBG_STACKTRACES_TO_STDERR") != NULL)
+    {
+      fprintf(stderr, "\nProcess info:\n");
+      write_process_info(ptrs ? ptrs->ExceptionRecord : NULL,
+                         ptrs ? ptrs->ContextRecord : NULL,
+                         stderr);
+      fprintf(stderr, "\nStacktrace:\n");
+      write_stacktrace(ptrs ? ptrs->ContextRecord : NULL, stderr);
+    }
+
+  fflush(stderr);
+  fflush(stdout);
+
+  cleanup_debughlp();
 
   /* terminate the application */
   return EXCEPTION_EXECUTE_HANDLER;

@@ -1,17 +1,22 @@
 /* id.c : operations on node-revision IDs
  *
  * ====================================================================
- * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -20,10 +25,10 @@
 
 #include "id.h"
 #include "../libsvn_fs/fs-loader.h"
-
+#include "private/svn_temp_serializer.h"
 
 
-typedef struct {
+typedef struct id_private_t {
   const char *node_id;
   const char *copy_id;
   const char *txn_id;
@@ -182,6 +187,7 @@ svn_fs_fs__id_txn_create(const char *node_id,
   pvt->txn_id = apr_pstrdup(pool, txn_id);
   pvt->rev = SVN_INVALID_REVNUM;
   pvt->offset = -1;
+
   id->vtable = &id_vtable;
   id->fsap_data = pvt;
   return id;
@@ -203,6 +209,7 @@ svn_fs_fs__id_rev_create(const char *node_id,
   pvt->txn_id = NULL;
   pvt->rev = rev;
   pvt->offset = offset;
+
   id->vtable = &id_vtable;
   id->fsap_data = pvt;
   return id;
@@ -221,6 +228,7 @@ svn_fs_fs__id_copy(const svn_fs_id_t *id, apr_pool_t *pool)
   new_pvt->txn_id = pvt->txn_id ? apr_pstrdup(pool, pvt->txn_id) : NULL;
   new_pvt->rev = pvt->rev;
   new_pvt->offset = pvt->offset;
+
   new_id->vtable = &id_vtable;
   new_id->fsap_data = new_pvt;
   return new_id;
@@ -270,6 +278,9 @@ svn_fs_fs__id_parse(const char *data,
 
   if (str[0] == 'r')
     {
+      apr_int64_t val;
+      svn_error_t *err;
+
       /* This is a revision type ID */
       pvt->txn_id = NULL;
 
@@ -281,7 +292,13 @@ svn_fs_fs__id_parse(const char *data,
       str = apr_strtok(NULL, "/", &last_str);
       if (str == NULL)
         return NULL;
-      pvt->offset = apr_atoi64(str);
+      err = svn_cstring_atoi64(&val, str);
+      if (err)
+        {
+          svn_error_clear(err);
+          return NULL;
+        }
+      pvt->offset = (apr_off_t)val;
     }
   else if (str[0] == 't')
     {
@@ -295,3 +312,88 @@ svn_fs_fs__id_parse(const char *data,
 
   return id;
 }
+
+/* (de-)serialization support */
+
+/* Serialization of the PVT sub-structure within the CONTEXT.
+ */
+static void
+serialize_id_private(svn_temp_serializer__context_t *context,
+                     const id_private_t * const *pvt)
+{
+  const id_private_t *private = *pvt;
+
+  /* serialize the pvt data struct itself */
+  svn_temp_serializer__push(context,
+                            (const void * const *)pvt,
+                            sizeof(*private));
+
+  /* append the referenced strings */
+  svn_temp_serializer__add_string(context, &private->node_id);
+  svn_temp_serializer__add_string(context, &private->copy_id);
+  svn_temp_serializer__add_string(context, &private->txn_id);
+
+  /* return to caller's nesting level */
+  svn_temp_serializer__pop(context);
+}
+
+/* Serialize an ID within the serialization CONTEXT.
+ */
+void
+svn_fs_fs__id_serialize(svn_temp_serializer__context_t *context,
+                        const struct svn_fs_id_t * const *id)
+{
+  /* nothing to do for NULL ids */
+  if (*id == NULL)
+    return;
+
+  /* serialize the id data struct itself */
+  svn_temp_serializer__push(context,
+                            (const void * const *)id,
+                            sizeof(**id));
+
+  /* serialize the id_private_t data sub-struct */
+  serialize_id_private(context,
+                       (const id_private_t * const *)&(*id)->fsap_data);
+
+  /* return to caller's nesting level */
+  svn_temp_serializer__pop(context);
+}
+
+/* Deserialization of the PVT sub-structure in BUFFER.
+ */
+static void
+deserialize_id_private(void *buffer, id_private_t **pvt)
+{
+  /* fixup the reference to the only sub-structure */
+  id_private_t *private;
+  svn_temp_deserializer__resolve(buffer, (void**)pvt);
+
+  /* fixup the sub-structure itself */
+  private = *pvt;
+  svn_temp_deserializer__resolve(private, (void**)&private->node_id);
+  svn_temp_deserializer__resolve(private, (void**)&private->copy_id);
+  svn_temp_deserializer__resolve(private, (void**)&private->txn_id);
+}
+
+/* Deserialize an ID inside the BUFFER.
+ */
+void
+svn_fs_fs__id_deserialize(void *buffer, svn_fs_id_t **id)
+{
+  /* The id maybe all what is in the whole buffer.
+   * Don't try to fixup the pointer in that case*/
+  if (*id != buffer)
+    svn_temp_deserializer__resolve(buffer, (void**)id);
+
+  /* no id, no sub-structure fixup necessary */
+  if (*id == NULL)
+    return;
+
+  /* the stored vtable is bogus at best -> set the right one */
+  (*id)->vtable = &id_vtable;
+
+  /* handle sub-structures */
+  deserialize_id_private(*id, (id_private_t **)&(*id)->fsap_data);
+}
+

@@ -2,17 +2,22 @@
  * cmdline.c:  command-line processing
  *
  * ====================================================================
- * Copyright (c) 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -22,6 +27,7 @@
 /*** Includes. ***/
 #include "svn_client.h"
 #include "svn_error.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_opt.h"
 #include "svn_utf.h"
@@ -76,7 +82,8 @@ resolve_repos_relative_url(const char **absolute_url,
    * arguments, it is presumed that the output will be canonicalized after
    * this function, which will remove any duplicate path separator.
    */
-  *absolute_url = apr_pstrcat(pool, repos_root_url, relative_url + 1, NULL);
+  *absolute_url = apr_pstrcat(pool, repos_root_url, relative_url + 1,
+                              (char *)NULL);
 
   return SVN_NO_ERROR;
 }
@@ -98,32 +105,44 @@ check_root_url_of_target(const char **root_url,
                          svn_client_ctx_t *ctx,
                          apr_pool_t *pool)
 {
-  svn_error_t *error;
+  svn_error_t *err;
   const char *tmp_root_url;
   const char *truepath;
   svn_opt_revision_t opt_rev;
 
   SVN_ERR(svn_opt_parse_path(&opt_rev, &truepath, target, pool));
+  if (!svn_path_is_url(truepath))
+    SVN_ERR(svn_dirent_get_absolute(&truepath, truepath, pool));
 
-  if ((error = svn_client__get_repos_root(&tmp_root_url,
-                                          truepath,
-                                          &opt_rev,
-                                          NULL, ctx, pool)))
+  err =  svn_client__get_repos_root(&tmp_root_url, truepath,
+                                    ctx, pool, pool);
+
+  if (err)
     {
       /* It is OK if the given target does not exist, it just means
        * we will not be able to determine the root url from this particular
        * argument.
+       *
+       * If the target itself is a URL to a repository that does not exist,
+       * that's fine, too. The callers will deal with this argument in an
+       * appropriate manter if it does not make any sense.
+       *
+       * Also tolerate locally added targets ("bad revision" error).
        */
-      if ((error->apr_err == SVN_ERR_ENTRY_NOT_FOUND)
-          || (error->apr_err == SVN_ERR_WC_NOT_DIRECTORY))
+      if ((err->apr_err == SVN_ERR_ENTRY_NOT_FOUND)
+          || (err->apr_err == SVN_ERR_WC_PATH_NOT_FOUND)
+          || (err->apr_err == SVN_ERR_WC_NOT_WORKING_COPY)
+          || (err->apr_err == SVN_ERR_RA_LOCAL_REPOS_OPEN_FAILED)
+          || (err->apr_err == SVN_ERR_CLIENT_BAD_REVISION))
         {
-          svn_error_clear(error);
+          svn_error_clear(err);
           return SVN_NO_ERROR;
         }
       else
-        return error;
+        return svn_error_trace(err);
      }
-   else if (*root_url != NULL)
+
+   if (*root_url && tmp_root_url)
      {
        if (strcmp(*root_url, tmp_root_url) != 0)
          return svn_error_createf(SVN_ERR_ILLEGAL_TARGET, NULL,
@@ -139,11 +158,12 @@ check_root_url_of_target(const char **root_url,
 /* Note: This is substantially copied from svn_opt__args_to_target_array() in
  * order to move to libsvn_client while maintaining backward compatibility. */
 svn_error_t *
-svn_client_args_to_target_array(apr_array_header_t **targets_p,
-                                apr_getopt_t *os,
-                                const apr_array_header_t *known_targets,
-                                svn_client_ctx_t *ctx,
-                                apr_pool_t *pool)
+svn_client_args_to_target_array2(apr_array_header_t **targets_p,
+                                 apr_getopt_t *os,
+                                 const apr_array_header_t *known_targets,
+                                 svn_client_ctx_t *ctx,
+                                 svn_boolean_t keep_last_origpath_on_truepath_collision,
+                                 apr_pool_t *pool)
 {
   int i;
   svn_boolean_t rel_url_found = FALSE;
@@ -153,6 +173,7 @@ svn_client_args_to_target_array(apr_array_header_t **targets_p,
     apr_array_make(pool, DEFAULT_ARRAY_SIZE, sizeof(const char *));
   apr_array_header_t *output_targets =
     apr_array_make(pool, DEFAULT_ARRAY_SIZE, sizeof(const char *));
+  apr_array_header_t *reserved_names = NULL;
 
   /* Step 1:  create a master array of targets that are in UTF-8
      encoding, and come from concatenating the targets left by apr_getopt,
@@ -233,29 +254,82 @@ svn_client_args_to_target_array(apr_array_header_t **targets_p,
             }
           else  /* not a url, so treat as a path */
             {
-              char *base_name;
+              const char *base_name;
+              const char *original_target;
 
+              original_target = svn_dirent_internal_style(true_target, pool);
               SVN_ERR(svn_opt__arg_canonicalize_path(&true_target,
                                                      true_target, pool));
 
+              /* There are two situations in which a 'truepath-conversion'
+                 (case-canonicalization to on-disk path on case-insensitive
+                 filesystem) needs to be undone:
+
+                 1. If KEEP_LAST_ORIGPATH_ON_TRUEPATH_COLLISION is TRUE, and
+                    this is the last target of a 2-element target list, and
+                    both targets have the same truepath. */
+              if (keep_last_origpath_on_truepath_collision
+                  && input_targets->nelts == 2 && i == 1
+                  && strcmp(original_target, true_target) != 0)
+                {
+                  const char *src_truepath = APR_ARRAY_IDX(output_targets,
+                                                           0,
+                                                           const char *);
+                  if (strcmp(src_truepath, true_target) == 0)
+                    true_target = original_target;
+                }
+
+              /* 2. If there is an exact match in the wc-db without a
+                    corresponding on-disk path (e.g. a scheduled-for-delete
+                    file only differing in case from an on-disk file). */
+              if (strcmp(original_target, true_target) != 0)
+                {
+                  const char *target_abspath;
+                  svn_node_kind_t kind;
+                  svn_error_t *err2;
+
+                  SVN_ERR(svn_dirent_get_absolute(&target_abspath,
+                                                  original_target, pool));
+                  err2 = svn_wc_read_kind(&kind, ctx->wc_ctx, target_abspath,
+                                          FALSE, pool);
+                  if (err2
+                      && (err2->apr_err == SVN_ERR_WC_NOT_WORKING_COPY
+                          || err2->apr_err == SVN_ERR_WC_UPGRADE_REQUIRED))
+                    {
+                      svn_error_clear(err2);
+                    }
+                  else
+                    {
+                      SVN_ERR(err2);
+                      /* We successfully did a lookup in the wc-db. Now see
+                         if it's something interesting. */
+                      if (kind == svn_node_file || kind == svn_node_dir)
+                        true_target = original_target;
+                    }
+                }
+
               /* If the target has the same name as a Subversion
                  working copy administrative dir, skip it. */
-              base_name = svn_path_basename(true_target, pool);
+              base_name = svn_dirent_basename(true_target, pool);
 
               if (svn_wc_is_adm_dir(base_name, pool))
                 {
-                  err = svn_error_createf(SVN_ERR_RESERVED_FILENAME_SPECIFIED,
-                                          err,
-                                          _("'%s' ends in a reserved name"),
-                                          utf8_target);
+                  if (!reserved_names)
+                    reserved_names = apr_array_make(pool, DEFAULT_ARRAY_SIZE,
+                                                    sizeof(const char *));
+
+                  APR_ARRAY_PUSH(reserved_names, const char *) = utf8_target;
+
                   continue;
                 }
             }
 
-          target = apr_pstrcat(pool, true_target, peg_rev, NULL);
+          target = apr_pstrcat(pool, true_target, peg_rev, (char *)NULL);
 
           if (rel_url_found)
             {
+              /* Later targets have priority over earlier target, I
+                 don't know why, see basic_relative_url_multi_repo. */
               SVN_ERR(check_root_url_of_target(&root_url, target,
                                                ctx, pool));
             }
@@ -272,7 +346,14 @@ svn_client_args_to_target_array(apr_array_header_t **targets_p,
        * arguments.
        */
       if (root_url == NULL)
-        SVN_ERR(svn_client_root_url_from_path(&root_url, "", ctx, pool));
+        {
+          err = svn_client_root_url_from_path(&root_url, "", ctx, pool);
+          if (err || root_url == NULL)
+            return svn_error_create(SVN_ERR_WC_NOT_WORKING_COPY, err,
+                                    _("Resolving '^/': no repository root "
+                                      "found in the target arguments or "
+                                      "in the current directory"));
+        }
 
       *targets_p = apr_array_make(pool, output_targets->nelts,
                                   sizeof(const char *));
@@ -297,7 +378,7 @@ svn_client_args_to_target_array(apr_array_header_t **targets_p,
               SVN_ERR(svn_opt__arg_canonicalize_url(&true_target, abs_target,
                                                     pool));
 
-              target = apr_pstrcat(pool, true_target, peg_rev, NULL);
+              target = apr_pstrcat(pool, true_target, peg_rev, (char *)NULL);
             }
 
           APR_ARRAY_PUSH(*targets_p, const char *) = target;
@@ -306,5 +387,11 @@ svn_client_args_to_target_array(apr_array_header_t **targets_p,
   else
     *targets_p = output_targets;
 
-  return err;
+  if (reserved_names && ! err)
+    for (i = 0; i < reserved_names->nelts; ++i)
+      err = svn_error_createf(SVN_ERR_RESERVED_FILENAME_SPECIFIED, err,
+                              _("'%s' ends in a reserved name"),
+                              APR_ARRAY_IDX(reserved_names, i, const char *));
+
+  return svn_error_trace(err);
 }

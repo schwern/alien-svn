@@ -8,6 +8,11 @@
 /* Callback typemaps */
 
 /* Baton typemaps */
+#ifdef SWIGPYTHON
+%apply void *PY_AS_VOID {
+  void *cancel_baton
+};
+#endif
 
 /* Includes */
 %{

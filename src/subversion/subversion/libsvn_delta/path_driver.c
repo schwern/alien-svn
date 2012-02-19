@@ -2,17 +2,22 @@
  * path_driver.c -- drive an editor across a set of paths
  *
  * ====================================================================
- * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -23,8 +28,10 @@
 #include "svn_types.h"
 #include "svn_delta.h"
 #include "svn_pools.h"
+#include "svn_dirent_uri.h"
 #include "svn_path.h"
 #include "svn_sorts.h"
+#include "private/svn_fspath.h"
 
 
 /*** Helper functions. ***/
@@ -127,7 +134,7 @@ svn_error_t *
 svn_delta_path_driver(const svn_delta_editor_t *editor,
                       void *edit_baton,
                       svn_revnum_t revision,
-                      apr_array_header_t *paths,
+                      const apr_array_header_t *paths,
                       svn_delta_path_driver_cb_func_t callback_func,
                       void *callback_baton,
                       apr_pool_t *pool)
@@ -188,7 +195,9 @@ svn_delta_path_driver(const svn_delta_editor_t *editor,
            current one.  For the first iteration, this is just the
            empty string. ***/
       if (i > 0)
-        common = svn_path_get_longest_ancestor(last_path, path, iterpool);
+        common = (last_path[0] == '/')
+          ? svn_fspath__get_longest_ancestor(last_path, path, iterpool)
+          : svn_relpath_get_longest_ancestor(last_path, path, iterpool);
       common_len = strlen(common);
 
       /*** Step B - Close any directories between the last path and
@@ -208,7 +217,10 @@ svn_delta_path_driver(const svn_delta_editor_t *editor,
 
       /*** Step C - Open any directories between the common ancestor
            and the parent of the current path. ***/
-      svn_path_split(path, &pdir, &bname, iterpool);
+      if (*path == '/')
+        svn_fspath__split(&pdir, &bname, path, iterpool);
+      else
+        svn_relpath_split(&pdir, &bname, path, iterpool);
       if (strlen(pdir) > common_len)
         {
           const char *piece = pdir + common_len + 1;

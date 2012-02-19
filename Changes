@@ -1,3 +1,7 @@
+1.7.3
+    Features
+    * Upgraded to Subversion 1.7.3
+
 1.6.12.1  Wed, 23 Feb 2011 11:39:10 +1100
     Misc
     * Update the repository URL to point at the real github repo.

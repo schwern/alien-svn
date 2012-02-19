@@ -1,3 +1,22 @@
+# ====================================================================
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
+# ====================================================================
+
 # experimental
 
 require "optparse"
@@ -60,6 +79,8 @@ module Svn
         mailer.repository_uri = options.repository_uri
         mailer.rss_path = options.rss_path
         mailer.rss_uri = options.rss_uri
+        mailer.rss_title = options.rss_title
+        mailer.rss_description = options.rss_description
         mailer.multi_project = options.multi_project
         mailer.show_path = options.show_path
         mailer.trunk_path = options.trunk_path
@@ -97,6 +118,8 @@ module Svn
         options.repository_uri = nil
         options.rss_path = nil
         options.rss_uri = nil
+        options.rss_title = nil
+        options.rss_description = nil
         options.multi_project = false
         options.show_path = false
         options.trunk_path = "trunk"
@@ -244,6 +267,15 @@ module Svn
         opts.on("--rss-uri=URI", "Use URI as output RSS URI") do |uri|
           options.rss_uri = uri
         end
+
+        opts.on("--rss-title=TITLE", "Use TITLE as output RSS title") do |title|
+          options.rss_title = title
+        end
+
+        opts.on("--rss-description=DESCRIPTION",
+                "Use DESCRIPTION as output RSS description") do |description|
+          options.rss_description = description
+        end
       end
 
       def add_other_options(opts, options)
@@ -260,7 +292,8 @@ module Svn
     attr_reader :to
     attr_writer :from, :add_diff, :multi_project, :show_path, :use_utf7
     attr_accessor :from_domain, :max_size, :repository_uri
-    attr_accessor :rss_path, :rss_uri, :trunk_path, :branches_path
+    attr_accessor :rss_path, :rss_uri, :rss_title, :rss_description
+    attr_accessor :trunk_path, :branches_path
     attr_accessor :tags_path, :name, :server, :port
 
     def initialize(repository_path, revision, to)
@@ -371,7 +404,9 @@ module Svn
       body << "  New Revision: #{@info.revision}\n"
       body << "\n"
       body << "  Log:\n"
-      @info.log.rstrip.each_line do |line|
+      stripped_log = @info.log.rstrip
+      stripped_log << "\n" unless stripped_log.empty?
+      stripped_log.each_line do |line|
         body << "    #{line}"
       end
       body << "\n"
@@ -622,8 +657,12 @@ CONTENT
     end
 
     def x_repository
-      # "X-SVN-Repository: #{@info.path}"
-      "X-SVN-Repository: XXX"
+      if @repository_uri
+        repository = "#{@repository_uri}/"
+      else
+        repository = "XXX"
+      end
+      "X-SVN-Repository: #{repository}"
     end
 
     def x_id
@@ -670,9 +709,9 @@ CONTENT
         maker.encoding = "UTF-8"
 
         maker.channel.about = @rss_uri
-        maker.channel.title = rss_title(@name || @repository_uri)
+        maker.channel.title = rss_title
         maker.channel.link = @repository_uri
-        maker.channel.description = rss_title(@name || @repository_uri)
+        maker.channel.description = rss_description
         maker.channel.dc_date = @info.date
 
         if base_rss
@@ -698,8 +737,12 @@ CONTENT
       end
     end
 
-    def rss_title(name)
-      "Repository of #{name}"
+    def rss_title
+      @rss_title || @name || @repository_uri
+    end
+
+    def rss_description
+      @rss_description || "Repository of #{@name || @repository_uri}"
     end
   end
 end

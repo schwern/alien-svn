@@ -3,17 +3,25 @@
 #  autoprop_tests.py:  testing automatic properties
 #
 #  Subversion is a tool for revision control.
-#  See http://subversion.tigris.org for more information.
+#  See http://subversion.apache.org for more information.
 #
 # ====================================================================
-# Copyright (c) 2000-2004, 2008-2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 ######################################################################
 
 # General modules
@@ -24,8 +32,12 @@ import svntest
 
 
 # (abbreviation)
-Skip = svntest.testcase.Skip
-XFail = svntest.testcase.XFail
+Skip = svntest.testcase.Skip_deco
+SkipUnless = svntest.testcase.SkipUnless_deco
+XFail = svntest.testcase.XFail_deco
+Issues = svntest.testcase.Issues_deco
+Issue = svntest.testcase.Issue_deco
+Wimp = svntest.testcase.Wimp_deco
 Item = svntest.wc.StateItem
 
 
@@ -62,6 +74,7 @@ enable-auto-props = %s
 fubar* = tarfile=si
 foobar.lha = lhafile=da;lzhfile=niet
 spacetest = abc = def ; ghi = ; = j
+escapetest = myval=;;;;val;myprop=p
 quotetest = svn:keywords="Author Date Id Rev URL";
 * = auto=oui
 ''' % (enable_flag and 'yes' or 'no')
@@ -127,6 +140,7 @@ def autoprops_test(sbox, cmd, cfgenable, clienable, subdir):
                'fubar.tar',
                'foobar.lha',
                'spacetest',
+               'escapetest',
                'quotetest']
   for filename in filenames:
     svntest.main.file_write(os.path.join(files_dir, filename),
@@ -168,6 +182,8 @@ def autoprops_test(sbox, cmd, cfgenable, clienable, subdir):
     check_proplist(filename, {'auto':'oui', 'lhafile':'da', 'lzhfile':'niet'})
     filename = os.path.join(files_wc_dir, 'spacetest')
     check_proplist(filename, {'auto':'oui', 'abc':'def', 'ghi':''})
+    filename = os.path.join(files_wc_dir, 'escapetest')
+    check_proplist(filename, {'auto':'oui', 'myval':';;val', 'myprop':'p'})
     filename = os.path.join(files_wc_dir, 'quotetest')
     check_proplist(filename, {'auto':'oui',
                               'svn:keywords': 'Author Date Id Rev URL'})
@@ -279,6 +295,7 @@ def autoprops_imp_dir(sbox):
 # Issue #2713: adding a file with an svn:eol-style property, svn should abort
 # if the file has mixed EOL style. Previously, svn aborted but had added the
 # file anyway.
+@Issue(2713)
 def fail_add_mixed_eol_style(sbox):
   "fail to add a file with mixed EOL style"
 
@@ -295,9 +312,9 @@ def fail_add_mixed_eol_style(sbox):
 
   svntest.main.file_write(filepath, 'foo\nbar\r\nbaz\r')
 
-  expected_stderr = "svn: File '.*/" + filename + \
+  expected_stderr = "svn: E200009: File '.*" + filename + \
                     "' has inconsistent newlines" + \
-                    "|" + "svn: Inconsistent line ending style\n"
+                    "|" + "svn: E135000: Inconsistent line ending style\n"
   run_and_verify_svn(None, [], expected_stderr,
                      'add', filepath, *parameters)
 

@@ -1,17 +1,22 @@
 /* fs.h : interface to Subversion filesystem, private to libsvn_fs
  *
  * ====================================================================
- * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -113,11 +118,20 @@ extern "C" {
 /* The minimum format number that stores node kinds in changed-paths lists. */
 #define SVN_FS_FS__MIN_KIND_IN_CHANGED_FORMAT 4
 
+/* The 1.7-dev format, never released, that packed revprops into SQLite
+   revprops.db . */
+#define SVN_FS_FS__PACKED_REVPROP_SQLITE_DEV_FORMAT 5
+
+/* The minimum format number that supports packed revprop shards. */
+#define SVN_FS_FS__MIN_PACKED_REVPROP_FORMAT SVN_FS_FS__PACKED_REVPROP_SQLITE_DEV_FORMAT
+
+/* The minimum format number that supports a configuration file (fsfs.conf) */
+#define SVN_FS_FS__MIN_CONFIG_FILE 4
+
 /* Private FSFS-specific data shared between all svn_txn_t objects that
    relate to a particular transaction in a filesystem (as identified
    by transaction id and filesystem UUID).  Objects of this type are
    allocated in their own subpool of the common pool. */
-struct fs_fs_shared_txn_data_t;
 typedef struct fs_fs_shared_txn_data_t
 {
   /* The next transaction in the list, or NULL if there is no following
@@ -156,7 +170,7 @@ typedef struct fs_fs_shared_txn_data_t
 /* Private FSFS-specific data shared between all svn_fs_t objects that
    relate to a particular filesystem, as identified by filesystem UUID.
    Objects of this type are allocated in the common pool. */
-typedef struct
+typedef struct fs_fs_shared_data_t
 {
   /* A list of shared transaction objects for each transaction that is
      currently active, or NULL if none are.  All access to this list,
@@ -188,7 +202,7 @@ typedef struct
 } fs_fs_shared_data_t;
 
 /* Private (non-shared) FSFS-specific data for each svn_fs_t object. */
-typedef struct
+typedef struct fs_fs_data_t
 {
   /* The format number of this FS. */
   int format;
@@ -224,9 +238,24 @@ typedef struct
      rep key to svn_string_t. */
   svn_cache__t *fulltext_cache;
 
-  /* Pack manifest cache; maps revision numbers to offsets in their respective
-     pack files. */
+  /* Pack manifest cache; a cache mapping (svn_revnum_t) shard number to
+     a manifest; and a manifest is a mapping from (svn_revnum_t) revision
+     number offset within a shard to (apr_off_t) byte-offset in the
+     respective pack file. */
   svn_cache__t *packed_offset_cache;
+
+  /* Cache for txdelta_window_t objects; the key is (revFilePath, offset) */
+  svn_cache__t *txdelta_window_cache;
+
+  /* Cache for node_revision_t objects; the key is (revision, id offset) */
+  svn_cache__t *node_revision_cache;
+
+  /* If set, there are or have been more than one concurrent transaction */
+  svn_boolean_t concurrent_transactions;
+
+  /* Tempoary cache for changed directories yet to be committed; maps from
+     unparsed FS ID to ###x.  NULL outside transactions. */
+  svn_cache__t *txn_dir_cache;
 
   /* Data shared between all svn_fs_t objects for a given filesystem. */
   fs_fs_shared_data_t *shared;
@@ -247,7 +276,7 @@ typedef struct
 
 
 /*** Filesystem Transaction ***/
-typedef struct
+typedef struct transaction_t
 {
   /* property list (const char * name, svn_string_t * value).
      may be NULL if there are no properties.  */
@@ -270,7 +299,7 @@ typedef struct
 /*** Representation ***/
 /* If you add fields to this, check to see if you need to change
  * svn_fs_fs__rep_copy. */
-typedef struct
+typedef struct representation_t
 {
   /* Checksums for the contents produced by this representation.
      This checksum is for the contents the rep shows to consumers,
@@ -297,7 +326,8 @@ typedef struct
      file. */
   svn_filesize_t size;
 
-  /* The size of the fulltext of the representation. */
+  /* The size of the fulltext of the representation. If this is 0,
+   * the fulltext size is equal to representation size in the rev file, */
   svn_filesize_t expanded_size;
 
   /* Is this representation a transaction? */
@@ -317,7 +347,7 @@ typedef struct
 /*** Node-Revision ***/
 /* If you add fields to this, check to see if you need to change
  * copy_node_revision in dag.c. */
-typedef struct
+typedef struct node_revision_t
 {
   /* node kind */
   svn_node_kind_t kind;
@@ -367,7 +397,7 @@ typedef struct
 
 
 /*** Change ***/
-typedef struct
+typedef struct change_t
 {
   /* Path of the change. */
   const char *path;

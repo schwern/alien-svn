@@ -2,17 +2,22 @@
 # Makefile.in:  template Makefile for Subversion
 #
 # ====================================================================
-# Copyright (c) 2000-2009 CollabNet.  All rights reserved.
+#    Licensed to the Apache Software Foundation (ASF) under one
+#    or more contributor license agreements.  See the NOTICE file
+#    distributed with this work for additional information
+#    regarding copyright ownership.  The ASF licenses this file
+#    to you under the Apache License, Version 2.0 (the
+#    "License"); you may not use this file except in compliance
+#    with the License.  You may obtain a copy of the License at
 #
-# This software is licensed as described in the file COPYING, which
-# you should have received as part of this distribution.  The terms
-# are also available at http://subversion.tigris.org/license-1.html.
-# If newer versions of this license are posted there, you may use a
-# newer version instead, at your option.
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
-# This software consists of voluntary contributions made by many
-# individuals.  For exact contribution history, see the revision
-# history and logs, available at http://subversion.tigris.org/.
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an
+#    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+#    KIND, either express or implied.  See the License for the
+#    specific language governing permissions and limitations
+#    under the License.
 # ====================================================================
 #
 
@@ -43,10 +48,13 @@ SVN_APRUTIL_LIBS = @SVN_APRUTIL_LIBS@
 SVN_APR_MEMCACHE_LIBS = @SVN_APR_MEMCACHE_LIBS@
 SVN_DB_LIBS = @SVN_DB_LIBS@
 SVN_GNOME_KEYRING_LIBS = @SVN_GNOME_KEYRING_LIBS@
+SVN_GSSAPI_LIBS = @SVN_GSSAPI_LIBS@
 SVN_KWALLET_LIBS = @SVN_KWALLET_LIBS@
+SVN_MAGIC_LIBS = @SVN_MAGIC_LIBS@
 SVN_SASL_LIBS = @SVN_SASL_LIBS@
 SVN_SERF_LIBS = @SVN_SERF_LIBS@
 SVN_SQLITE_LIBS = @SVN_SQLITE_LIBS@
+SVN_XML_LIBS = @SVN_XML_LIBS@
 SVN_ZLIB_LIBS = @SVN_ZLIB_LIBS@
 
 LIBS = @LIBS@
@@ -58,6 +66,7 @@ fsmod_libdir = @libdir@
 ramod_libdir = @libdir@
 bdb_libdir = @libdir@
 gnome_keyring_libdir = @libdir@
+gssapi_libdir = @libdir@
 kwallet_libdir = @libdir@
 neon_libdir = @libdir@
 serf_libdir = @libdir@
@@ -80,13 +89,13 @@ swig_pydir = @libdir@/svn-python/libsvn
 swig_pydir_extra = @libdir@/svn-python/svn
 swig_pldir = @libdir@/svn-perl
 swig_rbdir = $(SWIG_RB_SITE_ARCH_DIR)/svn/ext
-contribdir = @bindir@/svn-contrib
 toolsdir = @bindir@/svn-tools
 
 javahl_javadir = @libdir@/svn-javahl
 javahl_javahdir = @libdir@/svn-javahl/include
 javahl_libdir = @libdir@
 javahl_test_rootdir=$(abs_builddir)/subversion/bindings/javahl/test-work
+javahl_test_srcdir=$(abs_srcdir)/subversion/bindings/javahl
 
 MSGFMT = @MSGFMT@
 MSGFMTFLAGS = @MSGFMTFLAGS@
@@ -105,15 +114,18 @@ SHELL = @SHELL@
 LIBTOOL = @SVN_LIBTOOL@
 LTFLAGS = --tag=CC --silent
 LTCXXFLAGS = --tag=CXX --silent
+LT_CFLAGS = @LT_CFLAGS@
 LT_LDFLAGS = @LT_LDFLAGS@
+LT_SO_VERSION = @SVN_LT_SOVERSION@
 LT_NO_UNDEFINED = @LT_NO_UNDEFINED@
 LT_CXX_LIBADD = @LT_CXX_LIBADD@
 
 INCLUDES = -I$(top_srcdir)/subversion/include -I$(top_builddir)/subversion \
            @SVN_APR_INCLUDES@ @SVN_APRUTIL_INCLUDES@ @SVN_APR_MEMCACHE_INCLUDES@ \
-           @SVN_DB_INCLUDES@ @SVN_GNOME_KEYRING_INCLUDES@ @SVN_KWALLET_INCLUDES@ \
-           @SVN_NEON_INCLUDES@ @SVN_SASL_INCLUDES@ @SVN_SERF_INCLUDES@ \
-           @SVN_SQLITE_INCLUDES@ @SVN_ZLIB_INCLUDES@
+           @SVN_DB_INCLUDES@ @SVN_GNOME_KEYRING_INCLUDES@ @SVN_GSSAPI_INCLUDES@ \
+           @SVN_KWALLET_INCLUDES@ @SVN_MAGIC_INCLUDES@ @SVN_NEON_INCLUDES@ \
+           @SVN_SASL_INCLUDES@ @SVN_SERF_INCLUDES@ @SVN_SQLITE_INCLUDES@ \
+           @SVN_XML_INCLUDES@ @SVN_ZLIB_INCLUDES@
 
 APACHE_INCLUDES = @APACHE_INCLUDES@
 APACHE_LIBEXECDIR = $(DESTDIR)@APACHE_LIBEXECDIR@
@@ -134,13 +146,18 @@ SWIG_RB_SITE_ARCH_DIR = @SWIG_RB_SITE_ARCH_DIR@
 SWIG_RB_TEST_VERBOSE = @SWIG_RB_TEST_VERBOSE@
 SWIG_RB_RI_DATADIR = $(DESTDIR)$(datadir)/ri/$(RUBY_MAJOR).$(RUBY_MINOR)/site
 
+CTYPESGEN = @CTYPESGEN@
+CTYPES_PYTHON_SRC_DIR = $(abs_srcdir)/subversion/bindings/ctypes-python
+
 JAVAHL_JAR=subversion/bindings/javahl/svn-javahl.jar
 JAVAHL_INCLUDES= @JNI_INCLUDES@ -I$(abs_builddir)/subversion/bindings/javahl/include
 
 SVN_APR_INCLUDES = @SVN_APR_INCLUDES@
 SVN_APR_PREFIX = @SVN_APR_PREFIX@
+SVN_APR_CONFIG = @SVN_APR_CONFIG@
 SVN_APRUTIL_INCLUDES = @SVN_APRUTIL_INCLUDES@
 SVN_APRUTIL_PREFIX = @SVN_APRUTIL_PREFIX@
+SVN_APRUTIL_CONFIG = @SVN_APRUTIL_CONFIG@
 
 SVN_APR_MEMCACHE_PREFIX = @SVN_APR_MEMCACHE_PREFIX@
 SVN_APR_MEMCACHE_INCLUDES = @SVN_APR_MEMCACHE_INCLUDES@
@@ -152,6 +169,8 @@ SVN_ZLIB_PREFIX = @SVN_ZLIB_PREFIX@
 SVN_ZLIB_INCLUDES = @SVN_ZLIB_INCLUDES@
 
 MKDIR = @MKDIR@
+
+DOXYGEN = @DOXYGEN@
 
 # The EXTRA_ parameters can be used to pass extra flags at 'make' time.
 CFLAGS = @CFLAGS@ $(EXTRA_CFLAGS)
@@ -165,34 +184,55 @@ SWIG_LDFLAGS = @SWIG_LDFLAGS@ $(EXTRA_SWIG_LDFLAGS)
 
 COMPILE = $(CC) $(CPPFLAGS) $(CFLAGS) $(INCLUDES)
 COMPILE_CXX = $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INCLUDES)
-LT_COMPILE = $(LIBTOOL) $(LTFLAGS) --mode=compile $(COMPILE)
-LT_COMPILE_CXX = $(LIBTOOL) $(LTCXXFLAGS) --mode=compile $(COMPILE_CXX)
+LT_COMPILE = $(LIBTOOL) $(LTFLAGS) --mode=compile $(COMPILE) $(LT_CFLAGS)
+LT_COMPILE_CXX = $(LIBTOOL) $(LTCXXFLAGS) --mode=compile $(COMPILE_CXX) $(LT_CFLAGS)
 
 # Execute a command that loads libraries from the build dir
 LT_EXECUTE = $(LIBTOOL) $(LTFLAGS) --mode=execute `for f in $(abs_builddir)/subversion/*/*.la; do echo -dlopen $$f; done`
 
 # special compilation for files destined for mod_dav_svn
-COMPILE_APACHE_MOD = $(LIBTOOL) $(LTFLAGS) --mode=compile $(CC) $(CPPFLAGS) $(CFLAGS) $(APACHE_INCLUDES) $(INCLUDES) -o $@ -c
+COMPILE_APACHE_MOD = $(LIBTOOL) $(LTFLAGS) --mode=compile $(CC) $(CPPFLAGS) $(CFLAGS) $(LT_CFLAGS) $(APACHE_INCLUDES) $(INCLUDES) -o $@ -c
 
 # special compilation for files destined for libsvn_swig_* (e.g. swigutil_*.c)
-COMPILE_SWIG_PY = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_PY_COMPILE) $(CPPFLAGS) -DSWIGPYTHON $(SWIG_PY_INCLUDES) $(INCLUDES) -o $@ -c
-COMPILE_SWIG_PL = $(LIBTOOL) $(LTFLAGS) --mode=compile $(CC) $(CPPFLAGS) $(CFLAGS) $(SWIG_PL_INCLUDES) $(INCLUDES) -o $@ -c
-COMPILE_SWIG_RB = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_RB_COMPILE) $(CPPFLAGS) $(SWIG_RB_INCLUDES) $(INCLUDES) -o $@ -c
+COMPILE_SWIG_PY = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_PY_COMPILE) $(CPPFLAGS) $(LT_CFLAGS) -DSWIGPYTHON $(SWIG_PY_INCLUDES) $(INCLUDES) -o $@ -c
+COMPILE_SWIG_PL = $(LIBTOOL) $(LTFLAGS) --mode=compile $(CC) $(CPPFLAGS) $(CFLAGS) $(LT_CFLAGS) $(SWIG_PL_INCLUDES) $(INCLUDES) -o $@ -c
+COMPILE_SWIG_RB = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_RB_COMPILE) $(CPPFLAGS) $(LT_CFLAGS) $(SWIG_RB_INCLUDES) $(INCLUDES) -o $@ -c
 
 # special compilation for files destined for javahl (i.e. C++)
-COMPILE_JAVAHL_CXX = $(LIBTOOL) $(LTCXXFLAGS) --mode=compile $(COMPILE_CXX) $(JAVAHL_INCLUDES) -o $@ -c
+COMPILE_JAVAHL_CXX = $(LIBTOOL) $(LTCXXFLAGS) --mode=compile $(COMPILE_CXX) $(LT_CFLAGS) $(JAVAHL_INCLUDES) -o $@ -c
 COMPILE_JAVAHL_JAVAC = $(JAVAC) $(JAVAC_FLAGS)
 COMPILE_JAVAHL_JAVAH = $(JAVAH)
 
 LINK = $(LIBTOOL) $(LTFLAGS) --mode=link $(CC) $(LT_LDFLAGS) $(CFLAGS) $(LDFLAGS) -rpath $(libdir)
+LINK_LIB = $(LINK) $(LT_SO_VERSION)
 LINK_CXX = $(LIBTOOL) $(LTCXXFLAGS) --mode=link $(CXX) $(LT_LDFLAGS) $(CXXFLAGS) $(LDFLAGS) -rpath $(libdir)
+LINK_CXX_LIB = $(LINK_CXX) $(LT_SO_VERSION)
 
 # special link rule for mod_dav_svn
 LINK_APACHE_MOD = $(LIBTOOL) $(LTFLAGS) --mode=link $(CC) $(LT_LDFLAGS) $(CFLAGS) $(LDFLAGS) -rpath $(APACHE_LIBEXECDIR) -avoid-version -module $(APACHE_LDFLAGS)
 
+# Special LDFLAGS for some libraries
+libsvn_auth_gnome_keyring_LDFLAGS = @libsvn_auth_gnome_keyring_LDFLAGS@
+libsvn_auth_kwallet_LDFLAGS = @libsvn_auth_kwallet_LDFLAGS@
+libsvn_client_LDFLAGS = @libsvn_client_LDFLAGS@
+libsvn_delta_LDFLAGS = @libsvn_delta_LDFLAGS@
+libsvn_diff_LDFLAGS = @libsvn_diff_LDFLAGS@
+libsvn_fs_LDFLAGS = @libsvn_fs_LDFLAGS@
+libsvn_fs_base_LDFLAGS = @libsvn_fs_base_LDFLAGS@
+libsvn_fs_fs_LDFLAGS = @libsvn_fs_fs_LDFLAGS@
+libsvn_fs_util_LDFLAGS = @libsvn_fs_util_LDFLAGS@
+libsvn_ra_LDFLAGS = @libsvn_ra_LDFLAGS@
+libsvn_ra_local_LDFLAGS = @libsvn_ra_local_LDFLAGS@
+libsvn_ra_neon_LDFLAGS = @libsvn_ra_neon_LDFLAGS@
+libsvn_ra_serf_LDFLAGS = @libsvn_ra_serf_LDFLAGS@
+libsvn_ra_svn_LDFLAGS = @libsvn_ra_svn_LDFLAGS@
+libsvn_repos_LDFLAGS = @libsvn_repos_LDFLAGS@
+libsvn_subr_LDFLAGS = @libsvn_subr_LDFLAGS@
+libsvn_wc_LDFLAGS = @libsvn_wc_LDFLAGS@
+
 # Compilation of SWIG-generated C source code
-COMPILE_PY_WRAPPER = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_PY_COMPILE) $(CPPFLAGS) $(SWIG_PY_INCLUDES) -prefer-pic -c -o $@
-COMPILE_RB_WRAPPER = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_RB_COMPILE) $(CPPFLAGS) $(SWIG_RB_INCLUDES) -prefer-pic -c -o $@
+COMPILE_PY_WRAPPER = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_PY_COMPILE) $(LT_CFLAGS) $(CPPFLAGS) $(SWIG_PY_INCLUDES) -prefer-pic -c -o $@
+COMPILE_RB_WRAPPER = $(LIBTOOL) $(LTFLAGS) --mode=compile $(SWIG_RB_COMPILE) $(LT_CFLAGS) $(CPPFLAGS) $(SWIG_RB_INCLUDES) -prefer-pic -c -o $@
 
 # these commands link the wrapper objects into an extension library/module
 LINK_PY_WRAPPER = $(LIBTOOL) $(LTFLAGS) --mode=link $(SWIG_PY_LINK) $(SWIG_LDFLAGS) -rpath $(swig_pydir) -avoid-version -module
@@ -207,6 +247,7 @@ INSTALL_RAMOD_LIB = $(INSTALL_LIB)
 INSTALL_APR_MEMCACHE_LIB = $(INSTALL_LIB)
 INSTALL_BDB_LIB = $(INSTALL_LIB)
 INSTALL_GNOME_KEYRING_LIB = $(INSTALL_LIB)
+INSTALL_GSSAPI_LIB = $(INSTALL_LIB)
 INSTALL_KWALLET_LIB = $(INSTALL_LIB)
 INSTALL_NEON_LIB = $(INSTALL_LIB)
 INSTALL_SERF_LIB = $(INSTALL_LIB)
@@ -287,9 +328,11 @@ JAVAC_FLAGS = @JAVAC_FLAGS@
 JAVAH = @JAVAH@
 JAR = @JAR@
 
-JAVA_CLASSPATH=@JAVA_CLASSPATH@
+JAVA_CLASSPATH=$(abs_srcdir)/subversion/bindings/javahl/src:@JAVA_CLASSPATH@
 javahl_java_CLASSPATH=$(JAVA_CLASSPATH)
+javahl_compat_CLASSPATH=$(JAVA_CLASSPATH)
 javahl_tests_CLASSPATH=$(JAVA_CLASSPATH)
+javahl_compat_tests_CLASSPATH=$(JAVA_CLASSPATH)
 
 RUBY = @RUBY@
 RUBY_MAJOR = @RUBY_MAJOR@
@@ -309,28 +352,35 @@ install: external-install local-install revision-install
 
 @INCLUDE_OUTPUTS@
 
-local-all: @BUILD_RULES@
+local-all: @BUILD_RULES@ @TRANSFORM_LIBTOOL_SCRIPTS@
+
+transform-libtool-scripts: @BUILD_RULES@
+	@$(SHELL) $(top_srcdir)/build/transform_libtool_scripts.sh
 
 locale-gnu-pot:
 	cd $(abs_srcdir) && XGETTEXT="$(XGETTEXT)" MSGMERGE="$(MSGMERGE)" \
-	  tools/po/po-update.sh pot
+	  $(SHELL) tools/po/po-update.sh pot
 
 # "make locale-gnu-po-update" updates all translations.
 # "make locale-gnu-po-update PO=ll" updates only the ll.po file.
 locale-gnu-po-update:
 	cd $(abs_srcdir) && XGETTEXT="$(XGETTEXT)" MSGMERGE="$(MSGMERGE)" \
-	  tools/po/po-update.sh $(PO)
+	  $(SHELL) tools/po/po-update.sh $(PO)
 
 # clean everything but the bulky test output, returning the system back
 # to before 'make' was run.
 fast-clean: doc-clean
 	@list='$(BUILD_DIRS)'; for i in $$list; do                   \
+          if [ -d $$i ]; then                                        \
             echo "Cleaning $$i ..." ;                                \
-            (cd $$i && rm -f *.o *.lo *.la *.la-a *.spo *.mo && \
-             rm -rf .libs) ; \
+            (cd $$i && rm -f *.o *.lo *.la *.la-a *.spo *.mo &&      \
+             rm -rf .libs);                                          \
+          fi                                                         \
         done
-	rm -f $(CLEAN_FILES) $(abs_srcdir)/subversion/libsvn_fs_fs/rep-cache-db.h
-	find $(abs_srcdir) -name "*.pyc" -exec rm {} ';'
+	echo $(CLEAN_FILES) | xargs rm -f
+	find $(CTYPES_PYTHON_SRC_DIR) $(SWIG_PY_SRC_DIR) $(SWIG_PY_DIR) \
+		$(abs_srcdir)/build $(top_srcdir)/subversion/tests/cmdline/svntest \
+		-name "*.pyc" -exec rm {} ';'
 
 # clean all but bulky test output, returning to before './configure' was run.
 SVN_CONFIG_SCRIPT_FILES = @SVN_CONFIG_SCRIPT_FILES@
@@ -341,10 +391,11 @@ fast-distclean: fast-clean
 	$(SVN_CONFIG_SCRIPT_FILES)
 
 # clean everything out, returning to before './autogen.sh' was run.
-local-extraclean: local-distclean extraclean-swig extraclean-ctypes-python
+local-extraclean: local-distclean extraclean-swig extraclean-ctypes-python extraclean-javahl
 	rm -f $(top_srcdir)/build-outputs.mk \
               $(top_srcdir)/subversion/svn_private_config.h.in \
               $(top_srcdir)/configure \
+              $(top_srcdir)/gen-make.opts \
               $(top_srcdir)/build/config.guess \
               $(top_srcdir)/build/config.sub \
               $(top_srcdir)/build/libtool.m4 \
@@ -352,25 +403,33 @@ local-extraclean: local-distclean extraclean-swig extraclean-ctypes-python
               $(top_srcdir)/build/ltsugar.m4 \
               $(top_srcdir)/build/ltversion.m4 \
               $(top_srcdir)/build/lt~obsolete.m4 \
-              $(top_srcdir)/build/ltmain.sh
+              $(top_srcdir)/build/ltmain.sh \
+              $(top_srcdir)/build/transform_libtool_scripts.sh \
+              $(EXTRACLEAN_FILES)
+
 
 # clean everything, including test output.
-local-clean: fast-clean check-clean clean-swig clean-ctypes-python
+local-clean: fast-clean check-clean clean-swig clean-ctypes-python clean-javahl
 
 # clean everything, including test output.
 local-distclean: fast-distclean check-clean
 
 local-install: @INSTALL_RULES@
 
-### HACK!! Find a better way to do this
 revision-install:
-	subversion/svnversion/svnversion $(top_srcdir) /repos/svn/trunk > $(DESTDIR)$(includedir)/subversion-1/svn-revision.txt
+	test -d $(DESTDIR)$(includedir)/subversion-1 || \
+	  $(MKDIR) $(DESTDIR)$(includedir)/subversion-1
+	(subversion/svnversion/svnversion $(top_srcdir) 2> /dev/null ||  \
+	 svnversion $(top_srcdir) 2> /dev/null ||                        \
+	 echo "unknown";                                                 \
+	) > $(DESTDIR)$(includedir)/subversion-1/svn-revision.txt
 
 install-static: @INSTALL_STATIC_RULES@
 
 # JavaHL target aliases
-javahl: mkdir-init javahl-java javahl-javah javahl-lib @JAVAHL_TESTS_TARGET@
+javahl: mkdir-init javahl-java javahl-javah javahl-callback-javah javahl-types-javah javahl-lib @JAVAHL_TESTS_TARGET@ javahl-compat
 install-javahl: javahl install-javahl-java install-javahl-javah install-javahl-lib
+javahl-compat: javahl-compat-java @JAVAHL_COMPAT_TESTS_TARGET@
 
 clean-javahl:
 	rm -rf $(javahl_java_PATH) $(javahl_javah_PATH) @JAVAHL_OBJDIR@
@@ -379,14 +438,17 @@ clean-javahl:
 	rm -f $(libsvnjavahl_PATH)/*.lo
 	rm -f $(libsvnjavahl_PATH)/*.o
 
-check-javahl: javahl
+extraclean-javahl: clean-javahl
+
+check-javahl: javahl javahl-compat
 	@FIX_JAVAHL_LIB@
-	$(JAVA) "-Dtest.rootdir=$(javahl_test_rootdir)" "-Dtest.fstype=$(FS_TYPE)" -Djava.library.path=@JAVAHL_OBJDIR@:$(libdir) -classpath $(javahl_tests_PATH):$(javahl_tests_CLASSPATH) "-Dtest.tests=$(JAVAHL_TESTS)" org.tigris.subversion.javahl.RunTests
+	$(JAVA) "-Dtest.rootdir=$(javahl_test_rootdir)" "-Dtest.srcdir=$(javahl_test_srcdir)" "-Dtest.rooturl=$(BASE_URL)" "-Dtest.fstype=$(FS_TYPE)" -Djava.library.path=@JAVAHL_OBJDIR@:$(libdir) -classpath $(javahl_tests_PATH):$(javahl_tests_CLASSPATH) "-Dtest.tests=$(JAVAHL_TESTS)" org.apache.subversion.javahl.RunTests
+	$(JAVA) "-Dtest.rootdir=$(javahl_test_rootdir)" "-Dtest.srcdir=$(javahl_test_srcdir)" "-Dtest.rooturl=$(BASE_URL)" "-Dtest.fstype=$(FS_TYPE)" -Djava.library.path=@JAVAHL_OBJDIR@:$(libdir) -classpath $(javahl_compat_tests_PATH):$(javahl_tests_CLASSPATH) "-Dtest.tests=$(JAVAHL_TESTS)" org.tigris.subversion.javahl.RunTests
 
 # "make check CLEANUP=true" will clean up directories for successful tests.
 # "make check TESTS=subversion/tests/cmdline/basic_tests.py"
 #  will perform only basic tests (likewise for other tests).
-check: bin $(TEST_DEPS) @BDB_TEST_DEPS@
+check: bin @TRANSFORM_LIBTOOL_SCRIPTS@ $(TEST_DEPS) @BDB_TEST_DEPS@ svnmucc
 	@if test "$(PYTHON)" != "none"; then                                 \
 	  flags="--verbose";                                                 \
 	  if test "$(CLEANUP)" != ""; then                                   \
@@ -416,6 +478,13 @@ check: bin $(TEST_DEPS) @BDB_TEST_DEPS@
 	  if test "$(PARALLEL)" != ""; then                                  \
 	    flags="--parallel $$flags";                                      \
 	  fi;                                                                \
+	  if test "$(LOG_TO_STDOUT)" != ""; then                             \
+	    flags="--log-to-stdout $$flags";                                 \
+	  fi;                                                                \
+	  if test "$(MILESTONE_FILTER)" != ""; then                          \
+	    flags="--list --milestone-filter=$(MILESTONE_FILTER)             \
+		   --mode-filter=$(MODE_FILTER) --log-to-stdout $$flags";    \
+	  fi;                                                                \
 	  $(PYTHON) $(top_srcdir)/build/run_tests.py                         \
 	            --config-file $(top_srcdir)/subversion/tests/tests.conf  \
 	            $$flags                                                  \
@@ -428,54 +497,57 @@ check: bin $(TEST_DEPS) @BDB_TEST_DEPS@
 
 # First, set up Apache as documented in
 # subversion/tests/cmdline/README.
-davcheck: 
+davcheck: bin $(TEST_DEPS) @BDB_TEST_DEPS@ apache-mod svnmucc
 	@$(MAKE) check BASE_URL=http://localhost
 
 # Automatically configure and run Apache httpd on a random port, and then
 # run make check.
-davautocheck: 
+davautocheck: bin $(TEST_DEPS) @BDB_TEST_DEPS@ apache-mod svnmucc
+	@# Takes MODULE_PATH, USE_HTTPV1 and SVN_PATH_AUTHZ in the environment.
 	@APXS=$(APXS) bash $(top_srcdir)/subversion/tests/cmdline/davautocheck.sh
 
 # First, run:
 #   subversion/svnserve/svnserve -d -r `pwd`/subversion/tests/cmdline
-svncheck: 
+svncheck: bin $(TEST_DEPS) @BDB_TEST_DEPS@ svnmucc
 	@$(MAKE) check BASE_URL=svn://127.0.0.1
 
 # 'make svnserveautocheck' runs svnserve for you and kills it.
-svnserveautocheck: svnserve
-	bash $(top_srcdir)/subversion/tests/cmdline/svnserveautocheck.sh
+svnserveautocheck: svnserve bin $(TEST_DEPS) @BDB_TEST_DEPS@ svnmucc
+	@env PYTHON=$(PYTHON) THREADED=$(THREADED) \
+	  $(top_srcdir)/subversion/tests/cmdline/svnserveautocheck.sh
 
 # First, run:
 #   subversion/svnserve/svnserve --listen-host "::1" -d -r `pwd`/subversion/tests/cmdline
 
-svncheck6: 
+svncheck6: bin $(TEST_DEPS) @BDB_TEST_DEPS@ svnmucc
 	@$(MAKE) check BASE_URL=svn://\[::1\]
 
 # First make sure you can ssh to localhost and that "svnserve" is in
 # the path of the resulting shell.
-svnsshcheck:
+svnsshcheck: bin $(TEST_DEPS) @BDB_TEST_DEPS@ svnmucc
 	@$(MAKE) check \
 	  BASE_URL=svn+ssh://localhost`pwd`/subversion/tests/cmdline
 
-bdbcheck:
+bdbcheck: bin $(TEST_DEPS) @BDB_TEST_DEPS@ svnmucc
 	@$(MAKE) check FS_TYPE=bdb
 
 check-clean:
 	rm -rf subversion/tests/cmdline/svn-test-work          \
-               subversion/tests/libsvn_fs/test-repo-*          \
-               subversion/tests/libsvn_fs_base/test-repo-*     \
-               subversion/tests/libsvn_fs_fs/test-repo-*       \
-               subversion/tests/libsvn_ra_local/test-repo-*    \
-               subversion/tests/libsvn_repos/test-repo-*       \
-               subversion/tests/libsvn_subr/z                  \
-               subversion/tests/svnserveautocheck.pid          \
-               tests.log
+	       subversion/tests/libsvn_fs/test-repo-*          \
+	       subversion/tests/libsvn_fs_base/test-repo-*     \
+	       subversion/tests/libsvn_fs_fs/test-repo-*       \
+	       subversion/tests/libsvn_ra_local/test-repo-*    \
+	       subversion/tests/libsvn_repos/test-repo-*       \
+	       subversion/tests/libsvn_subr/z                  \
+	       subversion/tests/libsvn_wc/fake-wc              \
+	       subversion/tests/libsvn_client/test-patch*      \
+	       subversion/tests/svnserveautocheck.pid          \
+	       tests.log fails.log
 
 mkdir-init:
 	@list='$(BUILD_DIRS) $(SCHEMA_DIR) doc';         \
         for i in $$list; do                              \
             if [ ! -d $$i ]; then                        \
-                echo "$(MKDIR) $$i" ;                    \
                 $(MKDIR) $$i ;                           \
             fi;                                          \
         done
@@ -527,40 +599,26 @@ external-extraclean:
 # DOCUMENTATION RULES
 
 # Every single document in every format.
-doc: doc-misc-docs doc-api doc-javahl
+doc: doc-api doc-javahl
 
 # Generate API documentation for the C libraries.
 ### This could also generate POD for swig-perl, etc.
-doc-api:
+doc-api: mkdir-init
 	( cd $(top_srcdir) && \
 	  sed "s,\(OUTPUT_DIRECTORY *= *\),\1$(abs_builddir)/," \
-	  doc/doxygen.conf | doxygen - )
+	  doc/doxygen.conf | $(DOXYGEN) - )
 
 # Generate API documentation for the JavaHL package.
 doc-javahl:
 	$(JAVADOC) -d $(top_srcdir)/doc/javadoc \
 	  -sourcepath $(top_srcdir)/subversion/bindings/javahl/src \
 	  -link http://java.sun.com/javase/6/docs/api/ \
-	  org.tigris.subversion.javahl
-
-# Build all types of a certain doc.
-doc-misc-docs: doc-misc-docs-html doc-misc-docs-pdf doc-misc-docs-ps
-
-# Build all docs of a certain type.
-doc-all-html: doc-misc-docs-html
-doc-all-pdf: doc-misc-docs-pdf
-doc-all-ps: doc-misc-docs-ps
-
-# Assumes you have {xsltproc, fop, stylesheets} installed.
-doc-misc-docs-html:
-	cd $(top_srcdir)/doc/misc-docs && $(MAKE) all-html
-doc-misc-docs-pdf:
-	cd $(top_srcdir)/doc/misc-docs && $(MAKE) pdf
-doc-misc-docs-ps:
-	cd $(top_srcdir)/doc/misc-docs && $(MAKE) ps
+	  org.tigris.subversion.javahl \
+      org.apache.subversion.javahl \
+      org.apache.subversion.javahl.callback \
+      org.apache.subversion.javahl.types
 
 doc-clean:
-	cd $(top_srcdir)/doc/misc-docs && $(MAKE) clean
 	rm -rf $(top_srcdir)/doc/doxygen
 	rm -rf $(top_srcdir)/doc/javadoc
 
@@ -596,7 +654,7 @@ schema-clean:
            .po .spo .mo .rnc .rng .dtd .xsd .sql .h
 
 .sql.h:
-	$(top_srcdir)/build/transform_sql.sh $< < $< > $(top_srcdir)/$@
+	$(PYTHON) $(top_srcdir)/build/transform_sql.py $< $(top_srcdir)/$@
 
 .c.o:
 	$(COMPILE) -o $@ -c $<
@@ -660,6 +718,7 @@ install-swig-py: install-swig-py-lib
 install-swig-rb: install-swig-rb-lib
 
 clean-swig: clean-swig-headers clean-swig-py clean-swig-rb clean-swig-pl
+	@rm -f .swig_checked
 extraclean-swig: extraclean-swig-headers extraclean-swig-py \
                  extraclean-swig-rb extraclean-swig-pl
 
@@ -679,10 +738,16 @@ $(SWIG_PL_DIR)/native/Makefile.PL: $(SWIG_SRC_DIR)/perl/native/Makefile.PL.in
 $(SWIG_PL_DIR)/native/Makefile: $(SWIG_PL_DIR)/native/Makefile.PL
 	cd $(SWIG_PL_DIR)/native; $(PERL) Makefile.PL
 
+# There is a "readlink -f" command on some systems for the same purpose,
+# but it's not as portable (e.g. Mac OS X doesn't have it).  These should
+# only be used where Python/Perl are known to be available.
+READLINK_PY=$(PYTHON) -c 'import sys,os; print(os.path.realpath(sys.argv[1]))'
+READLINK_PL=$(PERL) -e 'use Cwd; print Cwd::realpath(shift)'
+
 swig-pl_DEPS = autogen-swig-pl libsvn_swig_perl \
   $(SWIG_PL_DIR)/native/Makefile
 swig-pl: $(swig-pl_DEPS)
-	if test "$(SWIG_PL_DIR)" != "$(SWIG_PL_SRC_DIR)"; then \
+	if test "`$(READLINK_PL) $(SWIG_PL_DIR)`" != "`$(READLINK_PL) $(SWIG_PL_SRC_DIR)`"; then \
 	  ln -sf $(SWIG_PL_SRC_DIR)/native/*.c $(SWIG_PL_DIR)/native; \
 	fi
 	cd $(SWIG_PL_DIR)/native; $(MAKE) OPTIMIZE="" OTHERLDFLAGS="$(SWIG_LDFLAGS)"
@@ -773,16 +838,9 @@ extraclean-swig-rb: clean-swig-rb
 install-swig-rb-doc:
 	$(RDOC) --all --ri --op "$(SWIG_RB_RI_DATADIR)" "$(SWIG_RB_SRC_DIR)/svn"
 
-# ctypes-python variables and make targets
-CTYPESGEN = @CTYPESGEN@
-CTYPES_PYTHON_SRC_DIR = $(abs_srcdir)/subversion/bindings/ctypes-python
-
+# ctypes-python make targets
 ctypes-python: local-all
-	cd $(CTYPES_PYTHON_SRC_DIR); \
-	  $(LT_EXECUTE) $(PYTHON) setup.py build --subversion="$(prefix)" \
-	  --apr="$(SVN_APR_PREFIX)" --apr-util="$(SVN_APRUTIL_PREFIX)" \
-	  --ctypesgen="$(CTYPESGEN)" --svn-headers="$(abs_srcdir)/subversion/include" \
-	  --cppflags="$(CPPFLAGS)" --ldflags="$(EXTRA_CTYPES_LDFLAGS)"
+	$(SHELL) $(abs_srcdir)/build/run_ctypesgen.sh "$(LT_EXECUTE)" "$(CPPFLAGS)" "$(EXTRA_CTYPES_LDFLAGS)" "$(PYTHON)" "$(CTYPESGEN)" "$(abs_srcdir)" "$(abs_builddir)" "$(libdir)" "$(SVN_APR_CONFIG)" "$(SVN_APRUTIL_CONFIG)"
 
 install-ctypes-python: ctypes-python
 	cd $(CTYPES_PYTHON_SRC_DIR); \
@@ -797,3 +855,8 @@ clean-ctypes-python:
 	  $(PYTHON) setup.py clean --all
 
 extraclean-ctypes-python: clean-ctypes-python
+
+
+# manually describe a dependency, which we won't otherwise detect
+subversion/libsvn_wc/wc-queries.h: $(abs_srcdir)/subversion/libsvn_wc/wc-metadata.sql
+subversion/libsvn_wc/wc-queries.h: $(abs_srcdir)/subversion/libsvn_wc/wc-checks.sql

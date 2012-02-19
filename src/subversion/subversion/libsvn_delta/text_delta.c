@@ -2,17 +2,22 @@
  * text-delta.c -- Internal text delta representation
  *
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  */
 
@@ -559,6 +564,71 @@ size_buffer(char **buf, apr_size_t *buf_size,
   return SVN_NO_ERROR;
 }
 
+/* Copy LEN bytes from SOURCE to TARGET, optimizing for the case where LEN
+ * is often very small.  Return a pointer to the first byte after the copied
+ * target range, unlike standard memcpy(), as a potential further
+ * optimization for the caller.
+ *
+ * memcpy() is hard to tune for a wide range of buffer lengths.  Therefore,
+ * it is often tuned for high throughput on large buffers and relatively
+ * low latency for mid-sized buffers (tens of bytes).  However, the overhead
+ * for very small buffers (<10 bytes) is still high.  Even passing the
+ * parameters, for instance, may take as long as copying 3 bytes.
+ *
+ * Because short copy sequences seem to be a common case, at least in
+ * "format 2" FSFS repositories, we copy them directly.  Larger buffer sizes
+ * aren't hurt measurably by the exta 'if' clause.  */
+static APR_INLINE char *
+fast_memcpy(char *target, const char *source, apr_size_t len)
+{
+  if (len > 7)
+    {
+      memcpy(target, source, len);
+      target += len;
+    }
+  else
+    {
+      /* memcpy is not exactly fast for small block sizes.
+       * Since they are common, let's run optimized code for them. */
+      const char *end = source + len;
+      for (; source != end; source++)
+        *(target++) = *source;
+    }
+
+  return target;
+}
+
+/* Copy LEN bytes from SOURCE to TARGET.  Unlike memmove() or memcpy(),
+ * create repeating patterns if the source and target ranges overlap.
+ * Return a pointer to the first byte after the copied target range.  */
+static APR_INLINE char *
+patterning_copy(char *target, const char *source, apr_size_t len)
+{
+  const char *end = source + len;
+
+  /* On many machines, we can do "chunky" copies. */
+
+#if SVN_UNALIGNED_ACCESS_IS_OK
+
+  if (end + sizeof(apr_uint32_t) <= target)
+    {
+      /* Source and target are at least 4 bytes apart, so we can copy in
+       * 4-byte chunks.  */
+      for (; source + sizeof(apr_uint32_t) <= end;
+           source += sizeof(apr_uint32_t),
+           target += sizeof(apr_uint32_t))
+      *(apr_uint32_t *)(target) = *(apr_uint32_t *)(source);
+    }
+
+#endif
+
+  /* fall through to byte-wise copy (either for the below-chunk-size tail
+   * or the whole copy) */
+  for (; source != end; source++)
+    *(target++) = *source;
+
+  return target;
+}
 
 void
 svn_txdelta_apply_instructions(svn_txdelta_window_t *window,
@@ -566,7 +636,7 @@ svn_txdelta_apply_instructions(svn_txdelta_window_t *window,
                                apr_size_t *tlen)
 {
   const svn_txdelta_op_t *op;
-  apr_size_t i, j, tpos = 0;
+  apr_size_t tpos = 0;
 
   for (op = window->ops; op < window->ops + window->num_ops; op++)
     {
@@ -581,25 +651,26 @@ svn_txdelta_apply_instructions(svn_txdelta_window_t *window,
         case svn_txdelta_source:
           /* Copy from source area.  */
           assert(op->offset + op->length <= window->sview_len);
-          memcpy(tbuf + tpos, sbuf + op->offset, buf_len);
+          fast_memcpy(tbuf + tpos, sbuf + op->offset, buf_len);
           break;
 
         case svn_txdelta_target:
-          /* Copy from target area.  Don't use memcpy() since its
-             semantics aren't guaranteed for overlapping memory areas,
-             and target copies are allowed to overlap to generate
-             repeated data.  */
+          /* Copy from target area.  We can't use memcpy() or the like
+           * since we need a specific semantics for overlapping copies:
+           * they must result in repeating patterns.
+           * Note that most copies won't have overlapping source and
+           * target ranges (they are just a result of self-compressed
+           * data) but a small percentage will.  */
           assert(op->offset < tpos);
-          for (i = op->offset, j = tpos; i < op->offset + buf_len; i++)
-            tbuf[j++] = tbuf[i];
+          patterning_copy(tbuf + tpos, tbuf + op->offset, buf_len);
           break;
 
         case svn_txdelta_new:
           /* Copy from window new area.  */
           assert(op->offset + op->length <= window->new_data->len);
-          memcpy(tbuf + tpos,
-                 window->new_data->data + op->offset,
-                 buf_len);
+          fast_memcpy(tbuf + tpos,
+                      window->new_data->data + op->offset,
+                      buf_len);
           break;
 
         default:

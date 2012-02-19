@@ -38,3 +38,4 @@
 # Avoid archives of this distribution
 \bAlien-SVN-[\d\.\_]+
 ^MYMETA.yml$
+^MYMETA\.json$

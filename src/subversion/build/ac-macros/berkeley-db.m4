@@ -1,3 +1,22 @@
+dnl ===================================================================
+dnl   Licensed to the Apache Software Foundation (ASF) under one
+dnl   or more contributor license agreements.  See the NOTICE file
+dnl   distributed with this work for additional information
+dnl   regarding copyright ownership.  The ASF licenses this file
+dnl   to you under the Apache License, Version 2.0 (the
+dnl   "License"); you may not use this file except in compliance
+dnl   with the License.  You may obtain a copy of the License at
+dnl
+dnl     http://www.apache.org/licenses/LICENSE-2.0
+dnl
+dnl   Unless required by applicable law or agreed to in writing,
+dnl   software distributed under the License is distributed on an
+dnl   "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+dnl   KIND, either express or implied.  See the License for the
+dnl   specific language governing permissions and limitations
+dnl   under the License.
+dnl ===================================================================
+dnl
 dnl   SVN_LIB_BERKELEY_DB(major, minor, patch)
 dnl
 dnl   Compare if the Berkeley DB specified by user or provided by APR-UTIL
@@ -27,7 +46,7 @@ AC_DEFUN(SVN_LIB_BERKELEY_DB,
   dnl        bdb based filesystem.
 
   AC_ARG_WITH(berkeley-db, [AS_HELP_STRING(
-                                           [[--with-berkeley-db=[HEADER:INCLUDES:LIB_SEARCH_DIRS:LIBS]]], [
+                                           [[--with-berkeley-db[=HEADER:INCLUDES:LIB_SEARCH_DIRS:LIBS]]], [
                           The Subversion Berkeley DB based filesystem library 
                           requires Berkeley DB $db_version or newer.  If you
                           specify `--without-berkeley-db', that library will
@@ -45,16 +64,16 @@ AC_DEFUN(SVN_LIB_BERKELEY_DB,
       fi
 
       if test "$withval" = "yes"; then
-        if test "$apu_db_version" != "4"; then
-          AC_MSG_ERROR([APR-UTIL wasn't linked against Berkeley DB 4,
-                        while the fs component is required.  Reinstall
-                        APR-UTIL with the appropiate options.])
+        if test "$apu_db_version" -lt "4"; then
+          AC_MSG_ERROR([APR-UTIL was linked against Berkeley DB version $apu_db_version,
+                        while version 4 or higher is required.  Reinstall
+                        APR-UTIL with the appropriate options.])
         fi
-        
+
         status=required
 
       elif test "$apu_found" != "reconfig"; then
-        if test "$apu_db_version" != 4; then
+        if test "$apu_db_version" -lt 4; then
           AC_MSG_ERROR([APR-UTIL was installed independently, it won't be
                         possible to use the specified Berkeley DB: $withval])
         fi
@@ -96,7 +115,7 @@ AC_DEFUN(SVN_LIB_BERKELEY_DB,
                    whether apr-util is linked against Berkeley DB
                    $db_version])
       status=try-link
-    elif test "$apu_db_version" != "4"; then
+    elif test "$apu_db_version" -lt "4"; then
       status=skip
     else
       status=try-link

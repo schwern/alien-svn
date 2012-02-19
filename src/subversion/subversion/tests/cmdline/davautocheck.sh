@@ -1,4 +1,24 @@
 #!/bin/bash
+#
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#
 # -*- mode: shell-script; -*-
 # $Id$
 
@@ -44,11 +64,24 @@
 #
 #   APXS=/opt/svn/1.4.x/bin/apxs MODULE_PATH=/opt/svn/1.4.x/modules \ 
 #     subversion/tests/cmdline/davautocheck.sh
+#
+# To prevent the server from advertising httpv2, pass USE_HTTPV1 in
+# the environment.
+# 
+# To use value for "SVNPathAuthz" directive set SVN_PATH_AUTHZ with
+# appropriate value in the environment.
+#
+# Passing --no-tests as argv[1] will have the script start a server
+# but not run any tests.
 
 SCRIPTDIR=$(dirname $0)
 SCRIPT=$(basename $0)
 
 trap stop_httpd_and_die SIGHUP SIGTERM SIGINT
+
+# Ensure the server uses a known locale.
+LC_ALL=C
+export LC_ALL
 
 function stop_httpd_and_die() {
   [ -e "$HTTPD_PID" ] && kill $(cat "$HTTPD_PID")
@@ -124,12 +157,27 @@ unset HTTPS_PROXY
 
 say "Using '$APXS'..."
 
+# Pick up $USE_HTTPV1
+ADVERTISE_V2_PROTOCOL=on
+if [ ${USE_HTTPV1:+set} ]; then
+ ADVERTISE_V2_PROTOCOL=off
+fi
+
+# Pick up $SVN_PATH_AUTHZ
+SVN_PATH_AUTHZ_LINE=""
+if [ ${SVN_PATH_AUTHZ:+set} ]; then
+ SVN_PATH_AUTHZ_LINE="SVNPathAuthz      ${SVN_PATH_AUTHZ}"
+fi
+
+# Find the source and build directories. The build dir can be found if it is
+# the current working dir or the source dir.
+pushd ${SCRIPTDIR}/../../../ > /dev/null
+ABS_SRCDIR=$(pwd)
+popd > /dev/null
 if [ -x subversion/svn/svn ]; then
   ABS_BUILDDIR=$(pwd)
-elif [ -x $SCRIPTDIR/../../svn/svn ]; then
-  pushd $SCRIPTDIR/../../../ >/dev/null
-  ABS_BUILDDIR=$(pwd)
-  popd >/dev/null
+elif [ -x $ABS_SRCDIR/subversion/svn/svn ]; then
+  ABS_BUILDDIR=$ABS_SRCDIR
 else
   fail "Run this script from the root of Subversion's build tree!"
 fi
@@ -156,14 +204,8 @@ case "`uname`" in
     ;;
 esac
 
-CLIENT_CMD="$ABS_BUILDDIR/subversion/svn/svn"
-$LDD "$CLIENT_CMD" | grep -q 'not found' \
-  && fail "Subversion client couldn't be fully linked at run-time"
-"$CLIENT_CMD" --version | egrep -q '^[*] ra_(neon|serf)' \
-  || fail "Subversion client couldn't find and/or load ra_dav library"
-
 httpd="$($APXS -q PROGNAME)"
-HTTPD=$(get_prog_name $httpd) || fail "HTTPD not found"
+HTTPD=$(get_prog_name $httpd) || fail "HTTPD '$HTTPD' not found"
 [ -x $HTTPD ] || fail "HTTPD '$HTTPD' not executable"
 
 "$HTTPD" -v 1>/dev/null 2>&1 \
@@ -187,6 +229,9 @@ LOAD_MOD_LOG_CONFIG=$(get_loadmodule_config mod_log_config) \
 LOAD_MOD_MIME=$(get_loadmodule_config mod_mime) \
   || fail "MIME module not found"
 
+LOAD_MOD_ALIAS=$(get_loadmodule_config mod_alias) \
+  || fail "ALIAS module not found"
+
 # needed for Auth*, Require, etc. directives
 LOAD_MOD_AUTH=$(get_loadmodule_config mod_auth) \
   || {
@@ -195,13 +240,15 @@ LOAD_MOD_AUTH="$(get_loadmodule_config mod_auth_basic)" \
     || fail "Auth_Basic module not found."
 LOAD_MOD_ACCESS_COMPAT="$(get_loadmodule_config mod_access_compat)" \
     && {
-say "Found Auth modules for Apache 2.3.0+"
+say "Found modules for Apache 2.3.0+"
 LOAD_MOD_AUTHN_CORE="$(get_loadmodule_config mod_authn_core)" \
     || fail "Authn_Core module not found."
 LOAD_MOD_AUTHZ_CORE="$(get_loadmodule_config mod_authz_core)" \
     || fail "Authz_Core module not found."
 LOAD_MOD_AUTHZ_HOST="$(get_loadmodule_config mod_authz_host)" \
     || fail "Authz_Host module not found."
+LOAD_MOD_UNIXD=$(get_loadmodule_config mod_unixd) \
+    || fail "UnixD module not found"
 }
 LOAD_MOD_AUTHN_FILE="$(get_loadmodule_config mod_authn_file)" \
     || fail "Authn_File module not found."
@@ -233,6 +280,8 @@ touch $HTTPD_MIME_TYPES
 cat > "$HTTPD_CFG" <<__EOF__
 $LOAD_MOD_LOG_CONFIG
 $LOAD_MOD_MIME
+$LOAD_MOD_ALIAS
+$LOAD_MOD_UNIXD
 $LOAD_MOD_DAV
 LoadModule          dav_svn_module "$MOD_DAV_SVN"
 $LOAD_MOD_AUTH
@@ -244,9 +293,9 @@ $LOAD_MOD_AUTHZ_HOST
 LoadModule          authz_svn_module "$MOD_AUTHZ_SVN"
 
 LockFile            lock
-User                $(whoami)
-Group               $(groups | awk '{print $1}')
-Listen              localhost:$HTTPD_PORT
+User                $(id -un)
+Group               $(id -gn)
+Listen              $HTTPD_PORT
 ServerName          localhost
 PidFile             "$HTTPD_PID"
 LogFormat           "%h %l %u %t \"%r\" %>s %b" common
@@ -285,6 +334,8 @@ CustomLog           "$HTTPD_ROOT/ops" "%t %u %{SVN-REPOS-NAME}e %{SVN-ACTION}e" 
   AuthName          "Subversion Repository"
   AuthUserFile      $HTTPD_USERS
   Require           valid-user
+  SVNAdvertiseV2Protocol ${ADVERTISE_V2_PROTOCOL}
+  ${SVN_PATH_AUTHZ_LINE}
 </Location>
 <Location /svn-test-work/local_tmp/repos>
   DAV               svn
@@ -294,7 +345,11 @@ CustomLog           "$HTTPD_ROOT/ops" "%t %u %{SVN-REPOS-NAME}e %{SVN-ACTION}e" 
   AuthName          "Subversion Repository"
   AuthUserFile      $HTTPD_USERS
   Require           valid-user
+  SVNAdvertiseV2Protocol ${ADVERTISE_V2_PROTOCOL}
+  ${SVN_PATH_AUTHZ_LINE}
 </Location>
+RedirectMatch permanent ^/svn-test-work/repositories/REDIRECT-PERM-(.*)\$ /svn-test-work/repositories/\$1
+RedirectMatch           ^/svn-test-work/repositories/REDIRECT-TEMP-(.*)\$ /svn-test-work/repositories/\$1
 __EOF__
 
 START="$HTTPD -f $HTTPD_CFG"
@@ -338,6 +393,20 @@ fi
 
 say "starting the tests..."
 
+CLIENT_CMD="$ABS_BUILDDIR/subversion/svn/svn"
+$LDD "$CLIENT_CMD" | grep -q 'not found' \
+  && fail "Subversion client couldn't be fully linked at run-time"
+
+if [ "$HTTP_LIBRARY" = "" ]; then
+  say "Using default dav library"
+  "$CLIENT_CMD" --version | egrep -q '^[*] ra_(neon|serf)' \
+    || fail "Subversion client couldn't find and/or load ra_dav library"
+else
+  say "Requesting dav library '$HTTP_LIBRARY'"
+  "$CLIENT_CMD" --version | egrep -q "^[*] ra_$HTTP_LIBRARY" \
+    || fail "Subversion client couldn't find and/or load ra_dav library '$HTTP_LIBRARY'"
+fi
+
 if [ $# = 0 ]; then
   time make check "BASE_URL=$BASE_URL"
   r=$?
@@ -345,7 +414,7 @@ else
   pushd "$ABS_BUILDDIR/subversion/tests/cmdline/" >/dev/null
   TEST="$1"
   shift
-  time "$SCRIPTDIR/${TEST}_tests.py" "--url=$BASE_URL" "$@"
+  time "$ABS_SRCDIR/subversion/tests/cmdline/${TEST}_tests.py" "--url=$BASE_URL" "$@"
   r=$?
   popd >/dev/null
 fi

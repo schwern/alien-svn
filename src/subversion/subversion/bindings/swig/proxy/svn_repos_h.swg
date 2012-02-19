@@ -13,12 +13,14 @@
   svn_repos_authz_func_t,
   svn_repos_authz_callback_t,
   svn_repos_file_rev_handler_t,
+  svn_repos_notify_func_t,
   svn_repos_history_func_t
 };
 %apply CALLABLE_CALLBACK * {
   svn_repos_authz_func_t *,
   svn_repos_authz_callback_t *,
   svn_repos_file_rev_handler_t *,
+  svn_repos_notify_func_t *,
   svn_repos_history_func_t *
 };
 #endif
@@ -27,8 +29,8 @@
 #ifdef SWIGPYTHON
 %apply void *PY_AS_VOID {
   void *baton,
-  void *start_callback_baton,
   void *notify_baton,
+  void *start_callback_baton,
   void *cancel_baton,
   void *edit_baton,
   void *authz_read_baton,
@@ -52,6 +54,7 @@
 
 /* Structure definitions */
 #ifdef SWIGPYTHON
+%proxy(svn_repos_notify_t);
 %opaque_proxy(svn_repos_t);
 %proxy(svn_repos_node_t);
 %proxy(svn_repos_parse_fns2_t);
@@ -132,6 +135,11 @@ static svn_error_t * svn_repos_invoke_file_rev_handler(
   return _obj(baton, path, rev, rev_props, delta_handler, delta_baton, prop_diffs, pool);
 }
 
+static void svn_repos_invoke_notify_func(
+  svn_repos_notify_func_t _obj, void *baton, const svn_repos_notify_t *notify, apr_pool_t *scratch_pool) {
+  _obj(baton, notify, scratch_pool);
+}
+
 static svn_error_t * svn_repos_invoke_history_func(
   svn_repos_history_func_t _obj, void *baton, const char *path, svn_revnum_t revision, apr_pool_t *pool) {
   return _obj(baton, path, revision, pool);
@@ -154,6 +162,7 @@ static svn_error_t * svn_repos_invoke_history_func(
 %funcptr_proxy(svn_repos_authz_func_t, svn_repos_invoke_authz_func);
 %funcptr_proxy(svn_repos_authz_callback_t, svn_repos_invoke_authz_callback);
 %funcptr_proxy(svn_repos_file_rev_handler_t, svn_repos_invoke_file_rev_handler);
+%funcptr_proxy(svn_repos_notify_func_t, svn_repos_invoke_notify_func);
 %funcptr_proxy(svn_repos_history_func_t, svn_repos_invoke_history_func);
 
 #endif

@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -115,8 +120,7 @@ typedef struct svn_stringbuf_t
 } svn_stringbuf_t;
 
 
-/** svn_string_t functions.
- *
+/**
  * @defgroup svn_string_svn_string_t svn_string_t functions
  * @{
  */
@@ -175,8 +179,7 @@ svn_string_find_char_backward(const svn_string_t *str, char ch);
 /** @} */
 
 
-/** svn_stringbuf_t functions.
- *
+/**
  * @defgroup svn_string_svn_stringbuf_t svn_stringbuf_t functions
  * @{
  */
@@ -184,16 +187,18 @@ svn_string_find_char_backward(const svn_string_t *str, char ch);
 /** Create a new bytestring containing a C string (NULL-terminated). */
 svn_stringbuf_t *
 svn_stringbuf_create(const char *cstring, apr_pool_t *pool);
+
 /** Create a new bytestring containing a generic string of bytes
  * (NON-NULL-terminated)
  */
 svn_stringbuf_t *
 svn_stringbuf_ncreate(const char *bytes, apr_size_t size, apr_pool_t *pool);
+
 /** Create a new empty bytestring with at least @a minimum_size bytes of
  * space available in the memory block.
  *
- * The allocated string buffer will be one byte larger then @a size to account
- * for a final '\0'.
+ * The allocated string buffer will be one byte larger than @a minimum_size
+ * to account for a final '\\0'.
  *
  * @since New in 1.6.
  */
@@ -245,6 +250,19 @@ svn_stringbuf_chop(svn_stringbuf_t *str, apr_size_t nbytes);
 /** Fill bytestring @a str with character @a c. */
 void
 svn_stringbuf_fillchar(svn_stringbuf_t *str, unsigned char c);
+
+/** Append a single character @a byte onto @a targetstr.
+ * This is an optimized version of svn_stringbuf_appendbytes()
+ * that is much faster to call and execute. Gains vary with the ABI.
+ * The advantages extend beyond the actual call because the reduced
+ * register pressure allows for more optimization within the caller.
+ *
+ * reallocs if necessary. @a targetstr is affected, nothing else is.
+ * @since New in 1.7.
+ */
+void
+svn_stringbuf_appendbyte(svn_stringbuf_t *targetstr,
+                         char byte);
 
 /** Append an array of bytes onto @a targetstr.
  *
@@ -304,15 +322,14 @@ svn_string_compare_stringbuf(const svn_string_t *str1,
 /** @} */
 
 
-/** C strings.
- *
- * @defgroup svn_string_cstrings c string functions
+/**
+ * @defgroup svn_string_cstrings C string functions
  * @{
  */
 
 /** Divide @a input into substrings along @a sep_chars boundaries, return an
- * array of copies of those substrings, allocating both the array and
- * the copies in @a pool.
+ * array of copies of those substrings (plain const char*), allocating both
+ * the array and the copies in @a pool.
  *
  * None of the elements added to the array contain any of the
  * characters in @a sep_chars, and none of the new elements are empty
@@ -344,7 +361,14 @@ svn_cstring_split_append(apr_array_header_t *array,
  * of zero or more glob patterns.
  */
 svn_boolean_t
-svn_cstring_match_glob_list(const char *str, apr_array_header_t *list);
+svn_cstring_match_glob_list(const char *str, const apr_array_header_t *list);
+
+/** Return @c TRUE iff @a str exactly matches any of the elements of @a list.
+ *
+ * @since new in 1.7
+ */
+svn_boolean_t
+svn_cstring_match_list(const char *str, const apr_array_header_t *list);
 
 /**
  * Return the number of line breaks in @a msg, allowing any kind of newline
@@ -381,6 +405,71 @@ svn_cstring_join(const apr_array_header_t *strings,
 int
 svn_cstring_casecmp(const char *str1, const char *str2);
 
+/**
+ * Parse the C string @a str into a 64 bit number, and return it in @a *n.
+ * Assume that the number is represented in base @a base.
+ * Raise an error if conversion fails (e.g. due to overflow), or if the
+ * converted number is smaller than @a minval or larger than @a maxval.
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_cstring_strtoi64(apr_int64_t *n, const char *str,
+                     apr_int64_t minval, apr_int64_t maxval,
+                     int base);
+
+/**
+ * Parse the C string @a str into a 64 bit number, and return it in @a *n.
+ * Assume that the number is represented in base 10.
+ * Raise an error if conversion fails (e.g. due to overflow).
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_cstring_atoi64(apr_int64_t *n, const char *str);
+
+/**
+ * Parse the C string @a str into a 32 bit number, and return it in @a *n.
+ * Assume that the number is represented in base 10.
+ * Raise an error if conversion fails (e.g. due to overflow).
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_cstring_atoi(int *n, const char *str);
+
+/**
+ * Parse the C string @a str into an unsigned 64 bit number, and return
+ * it in @a *n. Assume that the number is represented in base @a base.
+ * Raise an error if conversion fails (e.g. due to overflow), or if the
+ * converted number is smaller than @a minval or larger than @a maxval.
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_cstring_strtoui64(apr_uint64_t *n, const char *str,
+                      apr_uint64_t minval, apr_uint64_t maxval,
+                      int base);
+
+/**
+ * Parse the C string @a str into an unsigned 64 bit number, and return
+ * it in @a *n. Assume that the number is represented in base 10.
+ * Raise an error if conversion fails (e.g. due to overflow).
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_cstring_atoui64(apr_uint64_t *n, const char *str);
+
+/**
+ * Parse the C string @a str into an unsigned 32 bit number, and return
+ * it in @a *n. Assume that the number is represented in base 10.
+ * Raise an error if conversion fails (e.g. due to overflow).
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_cstring_atoui(unsigned int *n, const char *str);
 
 /** @} */
 

@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2004, 2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -92,6 +97,19 @@ svn_prop_hash_to_array(apr_hash_t *hash,
                        apr_pool_t *pool);
 
 /**
+ * Given an array of svn_prop_t items, return a hash mapping const char *
+ * property names to const svn_string_t * values.
+ *
+ * @warning The behaviour on #svn_prop_t objects with a @c NULL @c
+ * svn_prop_t.value member is undefined.
+ *
+ * @since New in 1.7.
+ */
+apr_hash_t *
+svn_prop_array_to_hash(const apr_array_header_t *properties,
+                       apr_pool_t *result);
+
+/**
  * Creates a deep copy of @a hash (keys <tt>const char *</tt> and
  * values <tt>const svn_string_t</tt>) in @a pool.
  *
@@ -100,6 +118,17 @@ svn_prop_hash_to_array(apr_hash_t *hash,
 apr_hash_t *
 svn_prop_hash_dup(apr_hash_t *hash,
                   apr_pool_t *pool);
+
+/**
+ * Return the value of property @a prop_name as it is in @a properties,
+ * with values <tt>const svn_string_t</tt>. If @a prop_name is not
+ * in @a properties or @a properties is NULL, return NULL.
+ *
+ * @since New in 1.7.
+ */
+const char *
+svn_prop_get_value(apr_hash_t *properties,
+                   const char *prop_name);
 
 /**
  * Subversion distinguishes among several kinds of properties,
@@ -175,11 +204,6 @@ svn_prop_needs_translation(const char *prop_name);
  * are uninterested.  If no props exist in a certain category, and the
  * property list argument for that category is non-NULL, then that
  * array will come back with <tt>->nelts == 0</tt>.
- *
- * ### Hmmm, maybe a better future interface is to return an array of
- *     arrays, where the index into the array represents the index
- *     into @c svn_prop_kind_t.  That way we can add more prop kinds
- *     in the future without changing this interface...
  */
 svn_error_t *
 svn_categorize_props(const apr_array_header_t *proplist,
@@ -253,7 +277,7 @@ svn_prop_name_is_valid(const char *prop_name);
  * @{
  */
 
-/* Properties whose values are interpreted as booleans (such as
+/** Properties whose values are interpreted as booleans (such as
  * svn:executable, svn:needs_lock, and svn:special) always fold their
  * value to this.
  *
@@ -308,13 +332,14 @@ svn_prop_name_is_valid(const char *prop_name);
  *
  * The format is a series of lines, such as:
  *
- *@verbatim
+ * <pre reason="Should use 'verbatim' instead, but Doxygen v1.6.1 & v1.7.1
+ *              then doesn't recognize the #define; presumably a bug.">
      localdir1           http://url.for.external.source/etc/
      localdir1/foo       http://url.for.external.source/foo
      localdir1/bar       http://blah.blah.blah/repositories/theirproj
      localdir1/bar/baz   http://blorg.blorg.blorg/basement/code
      localdir2           http://another.url/blah/blah/blah
-     localdir3           http://and.so.on/and/so/forth @endverbatim
+     localdir3           http://and.so.on/and/so/forth </pre>
  *
  * The subdir names on the left side are relative to the directory on
  * which this property is set.
@@ -335,15 +360,10 @@ svn_prop_name_is_valid(const char *prop_name);
 
 /** Meta-data properties.
  *
- * ====================================================================
- * They are documented here to avoid name reuse in other branches;
- * the "plain" subversion doesn't use them (yet?).
- * ====================================================================
- *
  * The following properties are used for storing meta-data about
  * individual entries in the meta-data branches of subversion,
  * see issue #1256 or browseable at
- * http://svn.collab.net/viewvc/svn/branches/meta-data-versioning/ .
+ * http://svn.apache.org/viewvc/subversion/branches/meta-data-versioning/ .
  * Furthermore @c svntar (http://svn.borg.ch/svntar/) and @c FSVS
  * (http://fsvs.tigris.org/) use these, too.
  *
@@ -389,12 +409,13 @@ svn_prop_name_is_valid(const char *prop_name);
 
 /** The property name *prefix* that makes a property a "WC property".
  *
- * For example, WebDAV RA implementations might store a versioned-resource url as a WC
- * prop like this:
+ * For example, WebDAV RA implementations might store a versioned-resource
+ * url as a WC prop like this:
  *
- * @verbatim
+ * <pre reason="Should use 'verbatim' instead, but Doxygen v1.6.1 & v1.7.1
+ *              then doesn't recognize the #define; presumably a bug.">
       name = svn:wc:dav_url
-      val  = http://www.lyra.org/repos/452348/e.289 @endverbatim
+      val  = http://www.example.com/repos/452348/e.289 </pre>
  *
  * The client will try to protect WC props by warning users against
  * changing them.  The client will also send them back to the RA layer

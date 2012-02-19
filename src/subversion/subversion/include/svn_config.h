@@ -1,17 +1,22 @@
 /**
  * @copyright
  * ====================================================================
- * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+ *    Licensed to the Apache Software Foundation (ASF) under one
+ *    or more contributor license agreements.  See the NOTICE file
+ *    distributed with this work for additional information
+ *    regarding copyright ownership.  The ASF licenses this file
+ *    to you under the Apache License, Version 2.0 (the
+ *    "License"); you may not use this file except in compliance
+ *    with the License.  You may obtain a copy of the License at
  *
- * This software is licensed as described in the file COPYING, which
- * you should have received as part of this distribution.  The terms
- * are also available at http://subversion.tigris.org/license-1.html.
- * If newer versions of this license are posted there, you may use a
- * newer version instead, at your option.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * This software consists of voluntary contributions made by many
- * individuals.  For exact contribution history, see the revision
- * history and logs, available at http://subversion.tigris.org/.
+ *    Unless required by applicable law or agreed to in writing,
+ *    software distributed under the License is distributed on an
+ *    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ *    KIND, either express or implied.  See the License for the
+ *    specific language governing permissions and limitations
+ *    under the License.
  * ====================================================================
  * @endcopyright
  *
@@ -92,6 +97,8 @@ typedef struct svn_config_t svn_config_t;
 #define SVN_CONFIG_SECTION_HELPERS              "helpers"
 #define SVN_CONFIG_OPTION_EDITOR_CMD                "editor-cmd"
 #define SVN_CONFIG_OPTION_DIFF_CMD                  "diff-cmd"
+/** @since New in 1.7. */
+#define SVN_CONFIG_OPTION_DIFF_EXTENSIONS           "diff-extensions"
 #define SVN_CONFIG_OPTION_DIFF3_CMD                 "diff3-cmd"
 #define SVN_CONFIG_OPTION_DIFF3_HAS_PROGRAM_ARG     "diff3-has-program-arg"
 #define SVN_CONFIG_OPTION_MERGE_TOOL_CMD            "merge-tool-cmd"
@@ -105,6 +112,7 @@ typedef struct svn_config_t svn_config_t;
 #define SVN_CONFIG_OPTION_MIMETYPES_FILE            "mime-types-file"
 #define SVN_CONFIG_OPTION_PRESERVED_CF_EXTS         "preserved-conflict-file-exts"
 #define SVN_CONFIG_OPTION_INTERACTIVE_CONFLICTS     "interactive-conflicts"
+#define SVN_CONFIG_OPTION_MEMORY_CACHE_SIZE         "memory-cache-size"
 #define SVN_CONFIG_SECTION_TUNNELS              "tunnels"
 #define SVN_CONFIG_SECTION_AUTO_PROPS           "auto-props"
 /** @} */
@@ -121,6 +129,8 @@ typedef struct svn_config_t svn_config_t;
 #define SVN_CONFIG_OPTION_PASSWORD_DB               "password-db"
 #define SVN_CONFIG_OPTION_REALM                     "realm"
 #define SVN_CONFIG_OPTION_AUTHZ_DB                  "authz-db"
+/** @since New in 1.7. */
+#define SVN_CONFIG_OPTION_FORCE_USERNAME_CASE       "force-username-case"
 #define SVN_CONFIG_SECTION_SASL                 "sasl"
 #define SVN_CONFIG_OPTION_USE_SASL                  "use-sasl"
 #define SVN_CONFIG_OPTION_MIN_SSF                   "min-encryption"
@@ -179,12 +189,44 @@ svn_config_get_config(apr_hash_t **cfg_hash,
                       apr_pool_t *pool);
 
 
+/** Set @a *cfgp to an empty @c svn_config_t structure,
+ * allocated in @a result_pool.
+ *
+ * Pass TRUE to @a section_names_case_sensitive if
+ * section names are to be populated case sensitively.
+ *
+ * @since New in 1.7.
+ */
+svn_error_t *
+svn_config_create(svn_config_t **cfgp,
+                  svn_boolean_t section_names_case_sensitive,
+                  apr_pool_t *result_pool);
+
 /** Read configuration data from @a file (a file or registry path) into
  * @a *cfgp, allocated in @a pool.
  *
  * If @a file does not exist, then if @a must_exist, return an error,
  * otherwise return an empty @c svn_config_t.
+ *
+ * If @a section_names_case_sensitive is TRUE, populate section name hashes
+ * case sensitively, except for the default SVN_CONFIG__DEFAULT_SECTION.
+ *
+ * @since New in 1.7.
  */
+
+svn_error_t *
+svn_config_read2(svn_config_t **cfgp,
+                 const char *file,
+                 svn_boolean_t must_exist,
+                 svn_boolean_t section_names_case_sensitive,
+                 apr_pool_t *pool);
+
+/** Similar to svn_config_read2, but always passes FALSE to
+ * section_names_case_sensitive.
+ *
+ * @deprecated Provided for backward compatibility with 1.6 API.
+ */
+SVN_DEPRECATED
 svn_error_t *
 svn_config_read(svn_config_t **cfgp,
                 const char *file,
@@ -228,7 +270,7 @@ svn_config_get(svn_config_t *cfg,
  *
  * This function invalidates all value expansions in @a cfg.
  *
- * To remove an option, pass NULL for the @c value.
+ * To remove an option, pass NULL for the @a value.
  */
 void
 svn_config_set(svn_config_t *cfg,
@@ -293,7 +335,7 @@ typedef svn_boolean_t (*svn_config_section_enumerator_t)(const char *name,
                                                          void *baton);
 
 /** Similar to svn_config_enumerate_sections2(), but uses a memory pool of
- * @a cfg instead of one that is explicitely provided.
+ * @a cfg instead of one that is explicitly provided.
  *
  * @deprecated Provided for backwards compatibility with the 1.2 API.
  */
@@ -340,7 +382,7 @@ typedef svn_boolean_t (*svn_config_enumerator_t)(const char *name,
                                                  void *baton);
 
 /** Similar to svn_config_enumerate2(), but uses a memory pool of
- * @a cfg instead of one that is explicitely provided.
+ * @a cfg instead of one that is explicitly provided.
  *
  * @deprecated Provided for backwards compatibility with the 1.2 API.
  */

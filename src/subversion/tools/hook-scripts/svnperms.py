@@ -1,14 +1,41 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#
 
-# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.6.x/tools/hook-scripts/svnperms.py $
-# $LastChangedDate: 2008-12-24 20:49:19 +0000 (Wed, 24 Dec 2008) $
-# $LastChangedBy: arfrever $
-# $LastChangedRevision: 875003 $
+# $HeadURL: http://svn.apache.org/repos/asf/subversion/branches/1.7.x/tools/hook-scripts/svnperms.py $
+# $LastChangedDate: 2011-07-12 18:37:44 +0000 (Tue, 12 Jul 2011) $
+# $LastChangedBy: blair $
+# $LastChangedRevision: 1145712 $
 
-import commands
 import sys, os
 import getopt
+import shlex
+
+try:
+  # Python >=3.0
+  from subprocess import getstatusoutput as subprocess_getstatusoutput
+except ImportError:
+  # Python <3.0
+  from commands import getstatusoutput as subprocess_getstatusoutput
 try:
     my_getopt = getopt.gnu_getopt
 except AttributeError:
@@ -36,7 +63,7 @@ class Config:
         cursectdict = None
         optname = None
         lineno = 0
-        for line in file.xreadlines():
+        for line in file:
             lineno = lineno + 1
             if line.isspace() or line[0] == '#':
                 continue
@@ -103,7 +130,17 @@ class Permission:
 
     def parse_groups(self, groupsiter):
         for option, value in groupsiter:
-            self._group[option] = value.split()
+            groupusers = []
+            for token in shlex.split(value):
+                # expand nested groups in place; no forward decls
+                if token[0] == "@":
+                    try:
+                        groupusers.extend(self._group[token[1:]])
+                    except KeyError:
+                        raise Error, "group '%s' not found" % token[1:]
+                else:
+                    groupusers.append(token)
+            self._group[option] = groupusers
 
     def parse_perms(self, permsiter):
         for option, value in permsiter:
@@ -142,7 +179,7 @@ class SVNLook:
 
     def _execcmd(self, *cmd, **kwargs):
         cmdstr = " ".join(cmd)
-        status, output = commands.getstatusoutput(cmdstr)
+        status, output = subprocess_getstatusoutput(cmdstr)
         if status != 0:
             sys.stderr.write(cmdstr)
             sys.stderr.write("\n")
@@ -248,7 +285,7 @@ Options:
     -s NAME    Use section NAME as permission section (default is
                repository name, extracted from repository path)
     -R REV     Query revision REV for commit information (for tests)
-    -A AUTHOR  Check commit as if AUTHOR had commited it (for tests)
+    -A AUTHOR  Check commit as if AUTHOR had committed it (for tests)
     -h         Show this message
 """
 
