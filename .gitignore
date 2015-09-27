@@ -4,6 +4,8 @@
 Makefile
 blib/
 pm_to_blib
+_alien
+_share
 /Build
 _build
 cover_db/
@@ -13,56 +15,6 @@ nytprof*
 MYMETA.*
 *.o
 
-# Subversion specific build and test files
-*.bs
-*.lo
-*.la
-.libs/
-*.mo
-/src/subversion/libtool
-/src/subversion/mkmf.log
-/src/subversion/config.*
-/src/subversion/subversion/tests/*/*-test
-/src/subversion/subversion/bindings/swig/perl/native/Makefile.*
-/src/subversion/contrib/client-side/svncopy/svncopy.pl
-/src/subversion/contrib/client-side/svncopy/testsvncopy.pl
-/src/subversion/packages/solaris/pkginfo
-/src/subversion/subversion/bindings/swig/perl/native/modules
-/src/subversion/subversion/svn/svn
-/src/subversion/subversion/svn_private_config.h
-/src/subversion/subversion/svnadmin/svnadmin
-/src/subversion/subversion/svndumpfilter/svndumpfilter
-/src/subversion/subversion/svnlook/svnlook
-src/subversion/subversion/svnmucc/svnmucc
-/src/subversion/subversion/svnserve/svnserve
-/src/subversion/subversion/svnsync/svnsync
-/src/subversion/subversion/svnversion/svnversion
-/src/subversion/subversion/svnrdump/svnrdump
-/src/subversion/subversion/tests/cmdline/atomic-ra-revprop-change
-/src/subversion/subversion/tests/cmdline/entries-dump
-/src/subversion/subversion/tests/libsvn_wc/wc-incomplete-tester
-/src/subversion/subversion/tests/libsvn_wc/wc-lock-tester
-/src/subversion/tools/client-side/svn-bench/svn-bench
-/src/subversion/tools/dev/svnraisetreeconflict/svnraisetreeconflict
-/src/subversion/tools/dev/fsfs-access-map
-/src/subversion/tools/dev/fsfs-reorg
-/src/subversion/tools/diff/diff
-/src/subversion/tools/diff/diff3
-/src/subversion/tools/diff/diff4
-/src/subversion/tools/server-side/fsfs-stats
-/src/subversion/tools/server-side/svn-populate-node-origins-index
-/src/subversion/tools/server-side/svn-rep-sharing-stats
-/src/subversion/tools/server-side/svnauthz
-/src/subversion/tools/server-side/svnauthz-validate
-/src/subversion/tools/backup/hot-backup.py
-/src/subversion/tools/hook-scripts/commit-access-control.pl
-/src/subversion/contrib/client-side/svn_load_dirs/svn_load_dirs.pl
-/src/subversion/contrib/hook-scripts/commit-email.pl
-
 
 # Always allow .in generation files
 !*.in
-
-
-# Always allow the pre-built Windows Makefile
-!/src/subversion/tools/dev/windows-build/Makefile
