@@ -61,13 +61,6 @@
 # Avoid archives of this distribution
 \bAlien-SVN-[\d\.\_]+
 
-# Avoid SVN configure stuff
-src/subversion/config.log$
-src/subversion/config.nice$
-src/subversion/config.status$
-src/subversion/libtool$
-src/subversion/mkmf.log$
-src/subversion/subversion/bindings/swig/perl/native/Makefile.PL$
-src/subversion/subversion/svn_private_config.h$
-src/subversion/tools/backup/hot-backup.py$
-src/subversion/tools/hook-scripts/commit-access-control.pl$
+# Avoid Alien directories
+_alien
+_share

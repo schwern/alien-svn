@@ -13,10 +13,11 @@ my $build = My::SVN::Builder->new(
 
     # perl for Alien::SVN, Apache for subversion and SVN::* modules.
     license         => 'open_source',
-    
+
     requires        => {
         perl                    => '5.8.0',
         version                 => '0.70',
+        'Alien::Base'           => '0.020',
     },
     build_requires      => {
         'ExtUtils::MakeMaker'   => '6.31',   # for INSTALL_BASE
@@ -24,16 +25,45 @@ my $build = My::SVN::Builder->new(
         'Test::More'            => '0.40',
     },
     configure_requires  => {
+        'Alien::Base'           => '0.020',
         'Module::Build'         => '0.28',
     },
+
+    alien_repository => {
+        protocol => 'local',
+        location => 'src',
+    },
+
+    alien_helper => {
+        nativedir => '"subversion/bindings/swig/perl/native"',
+        make => '$self->notes("your_make")',
+        configure_args => '$self->notes("configure_args")',
+        mm_args => 'join(" ", $self->_makemaker_args())',
+    },
+
+    alien_build_commands => [
+        '%c --enable-shared %{configure_args} PERL=%x',
+        '%{make}',
+        '%{make} swig-pl',
+        'cd %{nativedir} && %x Makefile.PL %{mm_args}',
+        '%{make} swig-pl-lib',
+    ],
+
+    alien_test_commands => [
+        '%{make} check-swig-pl',
+    ],
+
+    alien_install_commands => [
+        '%{make} install-lib',
+        '%{make} install-swig-pl-lib',
+        '%{make} -C %{nativedir} install',
+    ],
 
     no_index => {
         directory => [qw(inc src)]
     },
 
     meta_merge => {
-        provides => My::SVN::Builder->_svn_provides(),
-
         resources => {
             license     => ['http://dev.perl.org/licenses/'],
             bugtracker  => 'https://github.com/evalEmpire/Alien-SVN/issues',
@@ -60,38 +90,9 @@ my $make = $build->prompt(
 );
 $build->notes('your_make', $make);
 
-my $run_configure = 'y';
-if( -e 'src/subversion/config.status' ) {
-    $run_configure = $build->prompt(
-        "Looks like Subversion has already been configured.\n".
-        "Do you want to re-run configure?",
-        "n"
-    );
-}
-else {
-    $run_configure = $build->prompt(
-        "Run Subversion's configure now?", 'y'
-    );
-}
+my $configure_args = $build->prompt(
+    "\n\nWould you like to pass any arguments to configure?",
+    $build->_default_configure_args
+);
 
-if( $run_configure =~ /^y/i ) {
-    my $configure_args = $build->prompt(
-        "\n\nWould you like to pass any arguments to configure?", 
-        $build->_default_configure_args
-    );
-
-    $build->notes("configure_args", $configure_args);
-
-    print "\n\nSubversion will now be configured.\n\n";
-    sleep 1;
-
-    if( $build->_run_svn_configure ) {
-        print "\n\nYou should now run ./Build.\n";
-    }
-    else {
-        die <<'END';
-    Something went wrong with the Subversion configuration.
-    Please attempt to correct it and re-run Build.PL.
-END
-    }
-}
+$build->notes("configure_args", $configure_args);
